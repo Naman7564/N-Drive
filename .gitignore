@@ -1,0 +1,13 @@
+# Build artifacts
+/ndrive
+
+# Runtime data (SQLite DB + uploaded objects)
+/data/
+*.db
+
+# Logs
+*.log
+
+# OS / editor junk
+.DS_Store
+*.swp
