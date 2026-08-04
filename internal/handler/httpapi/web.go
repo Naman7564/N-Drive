@@ -94,6 +94,7 @@ func webHome(w http.ResponseWriter, r *http.Request) {
 	nonce := base64.RawURLEncoding.EncodeToString(raw[:])
 	page := strings.ReplaceAll(indexHTML, "__NONCE__", nonce)
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'nonce-"+nonce+"'; script-src 'nonce-"+nonce+"'; connect-src 'self'; frame-ancestors 'none'")
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
