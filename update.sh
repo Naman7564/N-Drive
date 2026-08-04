@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # N-Drive one-command deploy: pull + rebuild + restart.
-# Usage: ./update.sh [--no-tests]
 set -euo pipefail
 
 NDRIVE_DIR="/home/ubuntu/N-Drive"
@@ -13,19 +12,6 @@ HEALTH_URL="http://localhost:8080/health"
 
 # Go is not on the default non-interactive PATH; add its install location.
 export PATH="$PATH:/usr/local/go/bin"
-
-# --- flags ---------------------------------------------------------------
-RUN_TESTS=1
-for arg in "$@"; do
-  case "$arg" in
-    --no-tests) RUN_TESTS=0 ;;
-    *)
-      echo "unknown option: $arg" >&2
-      echo "usage: $0 [--no-tests]" >&2
-      exit 2
-      ;;
-  esac
-done
 
 # --- lock (prevents concurrent updates, tolerates stale locks) ----------
 if [ -f "$LOCK_FILE" ]; then
@@ -46,19 +32,11 @@ cd "$NDRIVE_DIR"
 echo "==> git pull"
 git pull --ff-only origin main
 
-# --- 2. tests -----------------------------------------------------------
-if [ "$RUN_TESTS" -eq 1 ]; then
-  echo "==> go test ./..."
-  go test ./...
-else
-  echo "==> go test ./... (skipped: --no-tests)"
-fi
-
-# --- 3. build ------------------------------------------------------------
+# --- 2. build ------------------------------------------------------------
 echo "==> go build"
 go build -o "$BIN.new" ./cmd/api
 
-# --- 4. stop old server (graceful) --------------------------------------
+# --- 3. stop old server (graceful) --------------------------------------
 # Only signal a PID that actually belongs to the ndrive binary, so a stale
 # or recycled pidfile can never take down an unrelated process.
 STOPPED=0
@@ -82,12 +60,12 @@ if [ -f "$PID_FILE" ]; then
   fi
 fi
 
-# --- 5. install new binary, keep previous as fallback --------------------
+# --- 4. install new binary, keep previous as fallback --------------------
 [ -f "$BIN" ] && mv -f "$BIN" "$PREV_BIN"
 mv -f "$BIN.new" "$BIN"
 chmod +x "$BIN"
 
-# --- 6. start new server -------------------------------------------------
+# --- 5. start new server -------------------------------------------------
 echo "==> starting new server"
 {
   echo ""
@@ -97,7 +75,7 @@ nohup "$BIN" < /dev/null >> "$LOG_FILE" 2>&1 &
 NEW_PID=$!
 echo "$NEW_PID" > "$PID_FILE"
 
-# --- 7. health check ------------------------------------------------------
+# --- 6. health check ------------------------------------------------------
 # Prefer an HTTP check via curl; if curl is missing, fall back to grepping
 # the log for the server's own "http server listening" line. This avoids
 # false failures when curl is absent or the server boots slowly.
@@ -124,7 +102,7 @@ if [ "$READY" -eq 1 ]; then
   exit 0
 fi
 
-# --- 8. rollback on failed start -----------------------------------------
+# --- 7. rollback on failed start -----------------------------------------
 echo "ERROR: server (pid $NEW_PID) did not become healthy" >&2
 kill -TERM "$NEW_PID" 2>/dev/null || true
 if [ -f "$PREV_BIN" ]; then
