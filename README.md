@@ -13,7 +13,7 @@ This repository starts with the first incremental feature: a production-minded G
 - Conservative security headers
 - Clean boundaries for handlers, middleware, repositories, services, storage, sessions, validation, and Ent/database integration
 - SQLite-backed authentication with bcrypt passwords, JWT access tokens, rotating refresh sessions, bearer/cookie transport, CSRF checks for cookie mutations, and login rate limiting
-- Authenticated folders, trash, local file storage, streaming upload/download, MIME and size checks, checksums, search, dashboard, and a minimal browser workspace
+- Authenticated folders, trash, local file storage, streaming upload/download, broad file-type support with MIME detection, 5 GB per-file size checks, checksums, search, dashboard, and a minimal browser workspace
 
 Future adapters and collaboration features remain extension points: Ent/PostgreSQL, S3, WebDAV, sharing/versioning, organizations/RBAC, 2FA, workers, Redis, Docker, and Kubernetes.
 
@@ -33,11 +33,15 @@ Then request `http://localhost:8080/health`.
 | `APP_ENV` | `development` |
 | `HTTP_ADDRESS` | `:8080` |
 | `HTTP_READ_HEADER_TIMEOUT` | `5s` |
-| `HTTP_READ_TIMEOUT` | `15s` |
 | `HTTP_WRITE_TIMEOUT` | `30s` |
 | `HTTP_IDLE_TIMEOUT` | `60s` |
 | `HTTP_SHUTDOWN_TIMEOUT` | `10s` |
 | `HTTP_MAX_HEADER_BYTES` | `1048576` |
+| `HTTP_READ_TIMEOUT` | `30m` |
+| `UPLOAD_MAX_BYTES` | `5368709120` (5 GiB) |
+| `STORAGE_ROOT` | `data/objects` |
+
+Uploads accept all detected file types by default. Set `AllowedMIMEs` when constructing a store if a deployment needs a narrower allowlist. Downloads remain forced to attachment disposition.
 
 ## Planned increments
 

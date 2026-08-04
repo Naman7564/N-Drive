@@ -23,7 +23,7 @@ Private by design. Unlike cloud drives that hold your data in someone else's dat
 - Runs as a local Go server (`go run ./cmd/api`, default `http://localhost:8080`), configured via environment variables (`APP_ENV`, `HTTP_ADDRESS`, HTTP timeouts, etc.).
 - The entire workspace is a single embedded HTML page served with a CSP nonce: sign in, dashboard overview, file browsing with folder navigation and breadcrumbs, trash, search, and upload/download.
 - Auth is email + password (bcrypt), JWT access tokens, rotating refresh sessions, bearer/cookie transport, CSRF checks on cookie mutations, and login rate limiting.
-- Files live in local storage with SHA-256 checksums, MIME and size validation, and a 100 MB per-file upload cap.
+- Files live in local storage with SHA-256 checksums, MIME detection, broad file-type support, and a 5 GB per-file upload cap.
 - Works in both dark and light themes; a mobile menu and responsive layout are part of the workspace.
 
 ## Capabilities and Constraints

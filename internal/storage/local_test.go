@@ -52,3 +52,27 @@ func TestLocalStoreSecurity(t *testing.T) {
 		t.Fatalf("mime error = %v", err)
 	}
 }
+
+func TestLocalStoreAcceptsBroadFileTypesByDefault(t *testing.T) {
+	store, err := NewLocalStore(t.TempDir(), 5<<30, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := store.Save(bytes.NewReader([]byte("<!doctype html><script>alert(1)</script>")), "page.html", "text/html")
+	if err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if item.ContentType != "text/html" {
+		t.Fatalf("ContentType = %q, want text/html", item.ContentType)
+	}
+}
+
+func TestLocalStoreFiveGiBBoundaryUsesStreamingLimit(t *testing.T) {
+	store, err := NewLocalStore(t.TempDir(), 5, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Save(bytes.NewReader(bytes.Repeat([]byte{'x'}, 6)), "too-large.bin", "application/octet-stream"); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("large file error = %v", err)
+	}
+}

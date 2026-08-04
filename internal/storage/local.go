@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 
 	"github.com/google/uuid"
 )
@@ -150,14 +149,7 @@ func (s *LocalStore) Delete(key string) error {
 // DiskUsage reports the total, free, and used bytes on the filesystem that
 // contains the storage root (server disk availability).
 func (s *LocalStore) DiskUsage() (total, free, used int64) {
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs(s.root, &stat); err != nil {
-		return 0, 0, 0
-	}
-	total = int64(stat.Blocks) * int64(stat.Bsize)
-	free = int64(stat.Bavail) * int64(stat.Bsize)
-	used = (int64(stat.Blocks) - int64(stat.Bfree)) * int64(stat.Bsize)
-	return total, free, used
+	return diskUsage(s.root)
 }
 
 func (s *LocalStore) safePath(key string) (string, error) {

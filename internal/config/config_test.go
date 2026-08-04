@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"testing"
+	"time"
 )
 
 func TestLoadDefaults(t *testing.T) {
@@ -19,6 +20,15 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.HTTP.Address != ":8080" || cfg.HTTP.MaxHeaderBytes != 1<<20 {
 		t.Fatalf("unexpected defaults: %+v", cfg)
+	}
+	if cfg.HTTP.ReadTimeout != 30*time.Minute {
+		t.Fatalf("ReadTimeout = %s, want 30m", cfg.HTTP.ReadTimeout)
+	}
+	if cfg.Storage.MaxBytes != 5<<30 {
+		t.Fatalf("MaxBytes = %d, want %d", cfg.Storage.MaxBytes, int64(5<<30))
+	}
+	if len(cfg.Storage.AllowedMIMEs) != 0 {
+		t.Fatalf("AllowedMIMEs = %v, want empty for broad file support", cfg.Storage.AllowedMIMEs)
 	}
 }
 

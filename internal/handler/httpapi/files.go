@@ -129,7 +129,9 @@ func (h *fileHandler) upload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 401, "authentication required")
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, h.storeMaxBytes()+1)
+	// Leave room for multipart framing and form metadata while the store enforces
+	// the exact per-file limit on the streamed file content.
+	r.Body = http.MaxBytesReader(w, r.Body, h.storeMaxBytes()+1<<20)
 	reader, err := r.MultipartReader()
 	if err != nil {
 		writeError(w, 400, "multipart upload required")
@@ -156,7 +158,8 @@ func (h *fileHandler) upload(w http.ResponseWriter, r *http.Request) {
 		}
 		result, err = h.service.Upload(r.Context(), uid, folderID, part.FileName(), part.Header.Get("Content-Type"), part)
 		if err != nil {
-			if errors.Is(err, storage.ErrTooLarge) {
+			var maxBytesErr *http.MaxBytesError
+			if errors.Is(err, storage.ErrTooLarge) || errors.As(err, &maxBytesErr) {
 				writeError(w, 413, "file too large")
 			} else if errors.Is(err, storage.ErrInvalidMIME) {
 				writeError(w, 415, "file type is not allowed")

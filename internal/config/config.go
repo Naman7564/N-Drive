@@ -47,8 +47,9 @@ type DatabaseConfig struct{ Path string }
 
 // StorageConfig controls local object storage and upload validation.
 type StorageConfig struct {
-	Root         string
-	MaxBytes     int64
+	Root     string
+	MaxBytes int64
+	// AllowedMIMEs is an optional allowlist. An empty list accepts all file types.
 	AllowedMIMEs []string
 }
 
@@ -59,7 +60,7 @@ func Load() (Config, error) {
 		HTTP: HTTPConfig{
 			Address:           getString("HTTP_ADDRESS", ":8080"),
 			ReadHeaderTimeout: getDuration("HTTP_READ_HEADER_TIMEOUT", 5*time.Second),
-			ReadTimeout:       getDuration("HTTP_READ_TIMEOUT", 15*time.Second),
+			ReadTimeout:       getDuration("HTTP_READ_TIMEOUT", 30*time.Minute),
 			WriteTimeout:      getDuration("HTTP_WRITE_TIMEOUT", 30*time.Second),
 			IdleTimeout:       getDuration("HTTP_IDLE_TIMEOUT", 60*time.Second),
 			ShutdownTimeout:   getDuration("HTTP_SHUTDOWN_TIMEOUT", 10*time.Second),
@@ -78,7 +79,7 @@ func Load() (Config, error) {
 			RefreshRateWindow: getDuration("REFRESH_RATE_WINDOW", time.Minute),
 		},
 		Database: DatabaseConfig{Path: getString("DATABASE_PATH", "data/fileservice.db")},
-		Storage:  StorageConfig{Root: getString("STORAGE_ROOT", "data/objects"), MaxBytes: getInt64("UPLOAD_MAX_BYTES", 100<<20), AllowedMIMEs: []string{"image/jpeg", "image/png", "image/gif", "application/pdf", "text/plain", "application/zip"}},
+		Storage:  StorageConfig{Root: getString("STORAGE_ROOT", "data/objects"), MaxBytes: getInt64("UPLOAD_MAX_BYTES", 5<<30), AllowedMIMEs: nil},
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
