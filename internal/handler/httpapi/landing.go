@@ -18,6 +18,7 @@ const landingHTML = `<!doctype html>
 <style nonce="__NONCE__">
 :root{color-scheme:dark;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;--bg:#080d1b;--panel:#10182b;--panel-2:#151f36;--panel-3:#1a2743;--line:#263653;--line-soft:#1d2a45;--text:#f4f7ff;--muted:#91a0bd;--faint:#60708e;--brand:#67d4ff;--brand-2:#8b7cff;--danger:#fb7185;--success:#4ade80;--shadow:0 24px 80px #0005;--glow:0 0 80px #67d4ff18}
 *{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
 html,body{min-height:100%;background:var(--bg);color:var(--text)}
 body{background:radial-gradient(ellipse 90% 60% at 10% -10%,#1b3268 0,transparent 55%),radial-gradient(ellipse 70% 50% at 90% 5%,#35265e 0,transparent 50%),radial-gradient(ellipse 50% 40% at 50% 100%,#0f1e3a 0,transparent 60%),var(--bg);overflow-x:hidden}
 a{color:inherit;text-decoration:none}
@@ -220,6 +221,16 @@ footer{border-top:1px solid var(--line-soft);padding:clamp(24px,4vw,40px) clamp(
 @media(prefers-reduced-motion:reduce){
   .hero-blob,.mockup-frame,.hero-eyebrow-dot{animation:none}
 }
+/* ── SCROLL REVEAL ── */
+.reveal{opacity:0;transform:translateY(20px);transition:opacity .55s cubic-bezier(0,.7,.3,1),transform .55s cubic-bezier(0,.7,.3,1)}
+.reveal.visible{opacity:1;transform:none}
+.reveal-delay-1{transition-delay:.08s}
+.reveal-delay-2{transition-delay:.16s}
+.reveal-delay-3{transition-delay:.24s}
+.reveal-delay-4{transition-delay:.32s}
+.reveal-delay-5{transition-delay:.40s}
+.reveal-delay-6{transition-delay:.48s}
+@media(prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none;transition:none}}
 </style>
 </head>
 <body>
@@ -321,32 +332,32 @@ footer{border-top:1px solid var(--line-soft);padding:clamp(24px,4vw,40px) clamp(
   <h2 class="section-title">Built for control, not convenience theatre</h2>
   <p class="section-sub">N-Drive keeps it simple: upload, organize, download. No bloat. No SaaS lock-in. Just your files on your machine.</p>
   <div class="features-grid">
-    <div class="feat" style="--feat-glow:#67d4ff0a">
+    <div class="feat reveal reveal-delay-1" style="--feat-glow:#67d4ff0a">
       <div class="feat-icon blue">🔒</div>
       <h3>Private by design</h3>
       <p>All data stays on your own server. No third-party access, no analytics, no call-home. Your workspace is truly yours.</p>
     </div>
-    <div class="feat" style="--feat-glow:#8b7cff0a">
+    <div class="feat reveal reveal-delay-2" style="--feat-glow:#8b7cff0a">
       <div class="feat-icon purple">↑</div>
       <h3>Fast file uploads</h3>
       <p>Drag-and-drop or file picker. Real-time progress per file, up to 5 GB each. Multiple files upload sequentially with live status.</p>
     </div>
-    <div class="feat" style="--feat-glow:#4ade800a">
+    <div class="feat reveal reveal-delay-3" style="--feat-glow:#4ade800a">
       <div class="feat-icon green">✓</div>
       <h3>Checksum verified</h3>
       <p>Every file is integrity-checked on upload. You know exactly what arrived on disk — corrupted transfers are caught before they land.</p>
     </div>
-    <div class="feat" style="--feat-glow:#fbbf240a">
+    <div class="feat reveal reveal-delay-4" style="--feat-glow:#fbbf240a">
       <div class="feat-icon amber">▰</div>
       <h3>Folder organisation</h3>
       <p>Create nested folders, move files between them, rename anything. Breadcrumb navigation keeps you oriented at any depth.</p>
     </div>
-    <div class="feat" style="--feat-glow:#67d4ff0a">
+    <div class="feat reveal reveal-delay-5" style="--feat-glow:#67d4ff0a">
       <div class="feat-icon blue">◓</div>
       <h3>Storage tracking</h3>
       <p>Live disk usage meter in the sidebar. See exactly how much space is used, free, and total — no surprises.</p>
     </div>
-    <div class="feat" style="--feat-glow:#fb71850a">
+    <div class="feat reveal reveal-delay-6" style="--feat-glow:#fb71850a">
       <div class="feat-icon rose">♲</div>
       <h3>Trash & recovery</h3>
       <p>Deleted files go to Trash first. Restore with one click or purge permanently when you're sure. No accidental data loss.</p>
@@ -356,7 +367,7 @@ footer{border-top:1px solid var(--line-soft);padding:clamp(24px,4vw,40px) clamp(
 
 <!-- DETAIL 1: Upload -->
 <section class="section" style="padding-top:0">
-  <div class="detail">
+  <div class="detail reveal">
     <div class="detail-text">
       <div class="section-label">File management</div>
       <h2 class="section-title">Upload anything. Find it instantly.</h2>
@@ -407,7 +418,7 @@ footer{border-top:1px solid var(--line-soft);padding:clamp(24px,4vw,40px) clamp(
 
 <!-- DETAIL 2: Storage -->
 <section class="section" style="padding-top:0">
-  <div class="detail flip">
+  <div class="detail flip reveal">
     <div class="detail-text">
       <div class="section-label">Storage & security</div>
       <h2 class="section-title">Know exactly what's on your drive</h2>
@@ -466,7 +477,7 @@ footer{border-top:1px solid var(--line-soft);padding:clamp(24px,4vw,40px) clamp(
 
 <!-- STATS -->
 <div class="stats-banner">
-  <div class="stats-inner">
+  <div class="stats-inner reveal">
     <div class="stat-big">
       <div class="stat-big-val">5 GB</div>
       <div class="stat-big-label">Max file size per upload</div>
@@ -486,7 +497,7 @@ footer{border-top:1px solid var(--line-soft);padding:clamp(24px,4vw,40px) clamp(
 
 <!-- CTA -->
 <section class="cta">
-  <div class="cta-inner">
+  <div class="cta-inner reveal">
     <h2>Ready to take back<br><em>your files?</em></h2>
     <p>Sign in to your private workspace. Everything runs on your own server — no accounts to create, no SaaS to trust.</p>
     <div class="cta-actions">
@@ -509,6 +520,29 @@ footer{border-top:1px solid var(--line-soft);padding:clamp(24px,4vw,40px) clamp(
   <div>Private · Self-hosted · Yours</div>
 </footer>
 
+<script nonce="__NONCE__">
+(function(){
+  // Scroll-reveal via IntersectionObserver
+  var els=document.querySelectorAll('.reveal');
+  if(!els.length)return;
+  var io=new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      if(e.isIntersecting){e.target.classList.add('visible');io.unobserve(e.target)}
+    });
+  },{threshold:0.12,rootMargin:'0px 0px -40px 0px'});
+  els.forEach(function(el){io.observe(el)});
+
+  // Nav: add solid bg on scroll
+  var nav=document.querySelector('.nav');
+  if(nav){
+    window.addEventListener('scroll',function(){
+      nav.style.background=window.scrollY>40
+        ?'color-mix(in srgb,#080d1b 92%,transparent)'
+        :'';
+    },{passive:true});
+  }
+})();
+</script>
 </body>
 </html>`
 
@@ -517,7 +551,7 @@ func webLanding(w http.ResponseWriter, r *http.Request) {
 	_, _ = rand.Read(raw[:])
 	nonce := base64.RawURLEncoding.EncodeToString(raw[:])
 	page := strings.ReplaceAll(landingHTML, "__NONCE__", nonce)
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'nonce-"+nonce+"'; connect-src 'self'; frame-ancestors 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'nonce-"+nonce+"'; script-src 'nonce-"+nonce+"'; frame-ancestors 'none'")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
