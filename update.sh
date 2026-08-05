@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # N-Drive one-command deploy: pull + rebuild + restart.
+# Deploys from the Go-Drive working tree, which is where the server lives.
 set -euo pipefail
 
-NDRIVE_DIR="/home/ubuntu/N-Drive"
-LOCK_FILE="$NDRIVE_DIR/.update.lock"
-PID_FILE="$NDRIVE_DIR/ndrive.pid"
-LOG_FILE="$NDRIVE_DIR/ndrive.log"
-BIN="$NDRIVE_DIR/ndrive"
-PREV_BIN="$NDRIVE_DIR/ndrive.prev"
+APP_DIR="/home/ubuntu/Go-Drive"
+LOCK_FILE="$APP_DIR/.update.lock"
+PID_FILE="$APP_DIR/ndrive.pid"
+LOG_FILE="$APP_DIR/ndrive.log"
+BIN="$APP_DIR/ndrive"
+PREV_BIN="$APP_DIR/ndrive.prev"
 HEALTH_URL="http://localhost:8080/health"
 
 # Go is not on the default non-interactive PATH; add its install location.
@@ -26,15 +27,25 @@ fi
 echo "$$" > "$LOCK_FILE"
 trap 'rm -f "$LOCK_FILE"' EXIT
 
-cd "$NDRIVE_DIR"
+cd "$APP_DIR"
 
-# --- 1. pull (best effort) ----------------------------------------------
+# --- 1. pull (best effort, fast-forward only) ---------------------------
 # The build below compiles the current working tree, so a failed pull must
 # not abort the deploy: otherwise an uncommitted edit (or an offline remote)
-# would silently leave the old server running.
-echo "==> git pull"
-if ! git pull --ff-only origin main; then
-  echo "warning: git pull failed; deploying current working tree as-is" >&2
+# would silently leave the old server running. We only pull when the remote's
+# default branch shares history with HEAD and can be applied as a clean
+# fast-forward; unrelated histories (or no network) fall back to deploying
+# the working tree as-is.
+echo "==> git pull (best effort)"
+DEFAULT_BRANCH=$(git ls-remote --symref origin HEAD 2>/dev/null | awk '/^ref:/{print $2}' | sed 's#^refs/heads/##')
+if [ -n "$DEFAULT_BRANCH" ] \
+   && git fetch origin "$DEFAULT_BRANCH" --quiet 2>/dev/null \
+   && git merge-base --is-ancestor HEAD "origin/$DEFAULT_BRANCH" 2>/dev/null; then
+  if ! git pull --ff-only origin "$DEFAULT_BRANCH"; then
+    echo "warning: git pull failed; deploying current working tree as-is" >&2
+  fi
+else
+  echo "warning: no pullable remote branch (unrelated history or offline); deploying current working tree as-is" >&2
 fi
 
 # --- 2. build ------------------------------------------------------------
@@ -46,18 +57,18 @@ go build -o "$BIN.new" ./cmd/api
 # or recycled pidfile can never take down an unrelated process. If the
 # pidfile is stale or missing, fall back to finding the real server by its
 # binary path; otherwise an orphaned old server would keep port 8080 and
-# the new binary would silently never serve.
+# the new binary would silently never serve. Whatever the source, every
+# identified process is first sent SIGTERM (graceful shutdown) and only
+# SIGKILLed if it refuses to stop within the grace window.
 OLD_PID=""
 if [ -f "$PID_FILE" ]; then
   OLD_PID=$(cat "$PID_FILE" 2>/dev/null || true)
 fi
-STOPPED=0
 OLD_PIDS=""
 if [ -n "$OLD_PID" ] && [ -r "/proc/$OLD_PID/cmdline" ] \
    && tr '\0' ' ' < "/proc/$OLD_PID/cmdline" | grep -q 'ndrive'; then
   echo "==> stopping old server (pid $OLD_PID)"
   OLD_PIDS="$OLD_PID"
-  STOPPED=1
 else
   # pidfile stale or missing: find every running ndrive. Match the absolute
   # binary path first, and the process name as a fallback so servers started
@@ -67,14 +78,13 @@ else
   OLD_PIDS=$(echo "$OLD_PIDS" | tr ' ' '\n' | sort -nu | tr '\n' ' ')
   if [ -n "$OLD_PIDS" ]; then
     echo "==> pidfile stale (${OLD_PID:-<none>}); stopping running server(s): ${OLD_PIDS% }"
-    for p in $OLD_PIDS; do kill -TERM "$p" 2>/dev/null || true; done
-    STOPPED=1
   else
     echo "==> no running ndrive found for pid ${OLD_PID:-<none>}"
   fi
 fi
 
-if [ "$STOPPED" -eq 1 ]; then
+if [ -n "$OLD_PIDS" ]; then
+  for p in $OLD_PIDS; do kill -TERM "$p" 2>/dev/null || true; done
   for ((i = 0; i < 30; i++)); do
     ALIVE=0
     for p in $OLD_PIDS; do
