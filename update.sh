@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # N-Drive one-command deploy: pull + rebuild + restart.
-# Deploys from the Go-Drive working tree, which is where the server lives.
+# Deploys from the N-Drive working tree, which is where the server lives.
 set -euo pipefail
 
-APP_DIR="/home/ubuntu/Go-Drive"
+APP_DIR="/home/ubuntu/N-Drive"
+REMOTE_URL="https://github.com/Naman7564/N-Drive.git"
 LOCK_FILE="$APP_DIR/.update.lock"
 PID_FILE="$APP_DIR/ndrive.pid"
 LOG_FILE="$APP_DIR/ndrive.log"
@@ -36,12 +37,12 @@ cd "$APP_DIR"
 # default branch shares history with HEAD and can be applied as a clean
 # fast-forward; unrelated histories (or no network) fall back to deploying
 # the working tree as-is.
-echo "==> git pull (best effort)"
-DEFAULT_BRANCH=$(git ls-remote --symref origin HEAD 2>/dev/null | awk '/^ref:/{print $2}' | sed 's#^refs/heads/##')
+echo "==> git pull (best effort, from $REMOTE_URL)"
+DEFAULT_BRANCH=$(git ls-remote --symref "$REMOTE_URL" HEAD 2>/dev/null | awk '/^ref:/{print $2}' | sed 's#^refs/heads/##')
 if [ -n "$DEFAULT_BRANCH" ] \
-   && git fetch origin "$DEFAULT_BRANCH" --quiet 2>/dev/null \
-   && git merge-base --is-ancestor HEAD "origin/$DEFAULT_BRANCH" 2>/dev/null; then
-  if ! git pull --ff-only origin "$DEFAULT_BRANCH"; then
+   && git fetch "$REMOTE_URL" "$DEFAULT_BRANCH" --quiet 2>/dev/null \
+   && git merge-base --is-ancestor HEAD FETCH_HEAD 2>/dev/null; then
+  if ! git pull --ff-only "$REMOTE_URL" "$DEFAULT_BRANCH"; then
     echo "warning: git pull failed; deploying current working tree as-is" >&2
   fi
 else

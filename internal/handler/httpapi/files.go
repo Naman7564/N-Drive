@@ -100,6 +100,12 @@ func (h *fileHandler) deleteFolder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *fileHandler) upload(w http.ResponseWriter, r *http.Request) {
+	// The server-wide write timeout starts when the request header is read,
+	// before the body has arrived, so a slow or large upload can exceed it
+	// before the completion response is written. That silently kills the
+	// response and leaves the client stuck at 100% with no confirmation even
+	// though the file was saved. Extend the write deadline for this request.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(uploadWriteBudget(r.ContentLength)))
 	r.Body = http.MaxBytesReader(w, r.Body, h.storeMaxBytes()+1<<20)
 	reader, err := r.MultipartReader()
 	if err != nil {
@@ -160,6 +166,10 @@ func (h *fileHandler) download(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "file not found")
 		return
 	}
+	// Same server-wide write timeout issue as uploads: the deadline starts
+	// when the request header is read, so a large or slow download can be cut
+	// off mid-stream. Extend the write deadline for this request.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(downloadWriteBudget(item.Size)))
 	file, err := h.store.Open(item.StorageKey)
 	if err != nil {
 		writeError(w, 404, "file content not found")
@@ -264,3 +274,36 @@ func (h *fileHandler) dashboard(w http.ResponseWriter, r *http.Request) {
 }
 func now() time.Time                        { return time.Now().UTC() }
 func (h *fileHandler) storeMaxBytes() int64 { return h.serviceMaxBytes }
+
+// writeBudgetForBody returns a write deadline generous enough that receiving
+// or serving a body of contentLength bytes is never cut off by the server-wide
+// write timeout, which is measured from when the request header is read. It
+// floors at minBudget and scales with the body size assuming at least
+// minThroughput bytes per second of effective transfer, plus a small headroom
+// for processing.
+func writeBudgetForBody(contentLength, minThroughput int64, minBudget time.Duration) time.Duration {
+	const headroom = 2 * time.Minute
+	budget := minBudget
+	if contentLength > 0 {
+		if scaled := time.Duration(contentLength/minThroughput)*time.Second + headroom; scaled > budget {
+			budget = scaled
+		}
+	}
+	return budget
+}
+
+// uploadWriteBudget is how long the upload route may take before its response
+// write is cut off. The floor matches the default read timeout so the write
+// deadline can never be the constraint that kills the completion response for
+// an upload that could otherwise complete, even over a slow connection.
+func uploadWriteBudget(contentLength int64) time.Duration {
+	return writeBudgetForBody(contentLength, 1<<20, 30*time.Minute)
+}
+
+// downloadWriteBudget is how long the download route may take before its
+// stream is cut off. Downloads stream continuously, so the budget scales with
+// the file size at a conservative 256 KiB/s floor; the 30-minute minimum
+// covers every download the default 30s write timeout would have killed.
+func downloadWriteBudget(size int64) time.Duration {
+	return writeBudgetForBody(size, 1<<18, 30*time.Minute)
+}
