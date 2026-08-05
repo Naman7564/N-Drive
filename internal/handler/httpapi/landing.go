@@ -230,8 +230,8 @@ footer{border-top:1px solid var(--line-soft);padding:clamp(24px,4vw,40px) clamp(
     <span>N-Drive</span>
   </div>
   <div class="nav-actions">
-    <a href="/" class="btn btn-ghost">Sign in</a>
-    <a href="/" class="btn btn-primary">Open workspace →</a>
+    <a href="/app" class="btn btn-ghost">Sign in</a>
+    <a href="/app" class="btn btn-primary">Open workspace →</a>
   </div>
 </nav>
 
@@ -251,8 +251,8 @@ footer{border-top:1px solid var(--line-soft);padding:clamp(24px,4vw,40px) clamp(
     <h1>Your files.<br><em>Your server.</em><br>Your rules.</h1>
     <p class="hero-sub">N-Drive is a private, self-hosted file workspace. No subscriptions, no third-party access, no telemetry — just your files running on your own server.</p>
     <div class="hero-actions">
-      <a href="/" class="btn btn-primary btn-lg">Open workspace →</a>
-      <a href="/" class="btn btn-outline btn-lg">Sign in</a>
+      <a href="/app" class="btn btn-primary btn-lg">Open workspace →</a>
+      <a href="/app" class="btn btn-outline btn-lg">Sign in</a>
     </div>
     <div class="hero-trust">
       <div class="hero-trust-item"><span>✓</span> No cloud dependency</div>
@@ -490,8 +490,8 @@ footer{border-top:1px solid var(--line-soft);padding:clamp(24px,4vw,40px) clamp(
     <h2>Ready to take back<br><em>your files?</em></h2>
     <p>Sign in to your private workspace. Everything runs on your own server — no accounts to create, no SaaS to trust.</p>
     <div class="cta-actions">
-      <a href="/" class="btn btn-primary btn-lg">Open workspace →</a>
-      <a href="/" class="btn btn-outline btn-lg">Sign in</a>
+      <a href="/app" class="btn btn-primary btn-lg">Open workspace →</a>
+      <a href="/app" class="btn btn-outline btn-lg">Sign in</a>
     </div>
     <div class="cta-note">Running on your server · Private by design · No third-party access</div>
   </div>
@@ -503,7 +503,7 @@ footer{border-top:1px solid var(--line-soft);padding:clamp(24px,4vw,40px) clamp(
     N-Drive
   </div>
   <div class="footer-links">
-    <a href="/">Workspace</a>
+    <a href="/app">Workspace</a>
     <a href="/health">Health</a>
   </div>
   <div>Private · Self-hosted · Yours</div>
