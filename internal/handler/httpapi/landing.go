@@ -39,21 +39,35 @@ img{display:block}
 .btn-outline:hover{border-color:color-mix(in srgb,var(--brand) 60%,transparent);background:color-mix(in srgb,var(--brand) 6%,transparent);color:var(--brand)}
 
 /* ── HERO ── */
-.hero{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:100px clamp(20px,5vw,80px) 80px;position:relative}
-.hero-eyebrow{display:inline-flex;align-items:center;gap:8px;border:1px solid color-mix(in srgb,var(--brand) 30%,transparent);background:color-mix(in srgb,var(--brand) 8%,transparent);color:var(--brand);border-radius:99px;padding:6px 14px;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin-bottom:28px}
-.hero-eyebrow-dot{width:6px;height:6px;border-radius:50%;background:var(--brand);box-shadow:0 0 0 3px #67d4ff28}
-.hero h1{font-size:clamp(42px,7vw,88px);font-weight:900;letter-spacing:-.04em;line-height:1.04;max-width:820px;margin-bottom:24px}
+.hero{min-height:100vh;display:grid;grid-template-columns:1fr 1fr;gap:clamp(40px,5vw,80px);align-items:center;padding:100px clamp(20px,5vw,80px) 80px;position:relative;overflow:hidden}
+/* dot-grid texture */
+.hero::before{content:'';position:absolute;inset:0;background-image:radial-gradient(circle,#ffffff09 1px,transparent 1px);background-size:28px 28px;mask-image:radial-gradient(ellipse 80% 80% at 50% 50%,black 40%,transparent 100%);pointer-events:none;z-index:0}
+/* animated blobs */
+.hero-blob{position:absolute;border-radius:50%;filter:blur(80px);pointer-events:none;z-index:0;will-change:transform}
+.hero-blob-1{width:520px;height:520px;background:radial-gradient(circle,#1d4a9044 0,transparent 70%);top:-120px;left:-80px;animation:blob1 14s ease-in-out infinite}
+.hero-blob-2{width:440px;height:440px;background:radial-gradient(circle,#3b216444 0,transparent 70%);bottom:-80px;right:-60px;animation:blob2 18s ease-in-out infinite}
+.hero-blob-3{width:300px;height:300px;background:radial-gradient(circle,#67d4ff14 0,transparent 70%);top:40%;left:40%;animation:blob3 22s ease-in-out infinite}
+@keyframes blob1{0%,100%{transform:translate(0,0) scale(1)}33%{transform:translate(40px,-30px) scale(1.06)}66%{transform:translate(-20px,20px) scale(.96)}}
+@keyframes blob2{0%,100%{transform:translate(0,0) scale(1)}40%{transform:translate(-30px,20px) scale(1.08)}70%{transform:translate(20px,-30px) scale(.94)}}
+@keyframes blob3{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-40px,30px) scale(1.1)}}
+.hero-text{position:relative;z-index:1}
+.hero-visual{position:relative;z-index:1}
+.hero-eyebrow{display:inline-flex;align-items:center;gap:8px;border:1px solid color-mix(in srgb,var(--brand) 30%,transparent);background:color-mix(in srgb,var(--brand) 8%,transparent);color:var(--brand);border-radius:99px;padding:6px 14px;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin-bottom:20px}
+.hero-eyebrow-dot{width:6px;height:6px;border-radius:50%;background:var(--brand);box-shadow:0 0 0 3px #67d4ff28;animation:pulse 2.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 3px #67d4ff28}50%{box-shadow:0 0 0 6px #67d4ff14}}
+.hero h1{font-size:clamp(36px,4.5vw,68px);font-weight:900;letter-spacing:-.045em;line-height:1.06;margin-bottom:20px}
 .hero h1 em{font-style:normal;background:linear-gradient(120deg,var(--brand),var(--brand-2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
-.hero-sub{font-size:clamp(15px,2vw,19px);color:var(--muted);max-width:540px;line-height:1.65;margin-bottom:40px}
-.hero-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:center;margin-bottom:64px}
-.hero-trust{display:flex;align-items:center;gap:20px;color:var(--faint);font-size:12px;flex-wrap:wrap;justify-content:center}
-.hero-trust-item{display:flex;align-items:center;gap:6px}
-.hero-trust-item span{color:var(--success);font-size:14px}
+.hero-sub{font-size:clamp(14px,1.4vw,17px);color:var(--muted);line-height:1.7;margin-bottom:36px;max-width:460px}
+.hero-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:24px}
+.hero-trust{display:flex;flex-direction:column;gap:8px;color:var(--faint);font-size:12px}
+.hero-trust-item{display:flex;align-items:center;gap:7px}
+.hero-trust-item span{color:var(--success);font-size:13px;flex:0 0 auto}
 
 /* ── MOCKUP ── */
-.hero-mockup{width:min(860px,90vw);margin:0 auto;position:relative}
-.mockup-glow{position:absolute;inset:-40px;background:radial-gradient(ellipse at center,#67d4ff0c 0,transparent 70%);pointer-events:none;z-index:0}
-.mockup-frame{border:1px solid var(--line);border-radius:18px;background:var(--panel);box-shadow:0 40px 120px #00000080,0 0 0 1px #ffffff06;overflow:hidden;position:relative;z-index:1}
+.hero-mockup{width:100%;position:relative}
+.mockup-glow{position:absolute;inset:-60px;background:radial-gradient(ellipse at 40% 40%,#67d4ff12 0,transparent 65%),radial-gradient(ellipse at 70% 80%,#8b7cff0e 0,transparent 55%);pointer-events:none;z-index:0}
+.mockup-frame{border:1px solid var(--line);border-radius:18px;background:var(--panel);box-shadow:0 32px 100px #00000090,0 0 0 1px #ffffff06,0 0 60px #67d4ff08;overflow:hidden;position:relative;z-index:1;animation:float 6s ease-in-out infinite}
+@keyframes float{0%,100%{transform:translateY(0) rotate(0deg)}25%{transform:translateY(-8px) rotate(.3deg)}75%{transform:translateY(-4px) rotate(-.2deg)}}
 .mockup-bar{height:40px;background:var(--panel-2);border-bottom:1px solid var(--line-soft);display:flex;align-items:center;gap:8px;padding:0 16px}
 .mockup-dot{width:10px;height:10px;border-radius:50%}
 .mockup-dot:nth-child(1){background:#ff5f57}
@@ -173,6 +187,11 @@ footer{border-top:1px solid var(--line-soft);padding:clamp(24px,4vw,40px) clamp(
 /* ── RESPONSIVE ── */
 @media(max-width:900px){
   .features-grid{grid-template-columns:repeat(2,1fr)}
+  .hero{grid-template-columns:1fr;text-align:center;padding-top:90px}
+  .hero h1{font-size:clamp(36px,7vw,56px)}
+  .hero-sub{max-width:100%}
+  .hero-actions{justify-content:center}
+  .hero-trust{flex-direction:row;flex-wrap:wrap;justify-content:center;gap:12px}
   .detail{grid-template-columns:1fr}
   .detail.flip{direction:ltr}
   .mockup-sidebar{display:none}
@@ -189,12 +208,17 @@ footer{border-top:1px solid var(--line-soft);padding:clamp(24px,4vw,40px) clamp(
   .mockup-main{padding:14px}
 }
 @media(prefers-reduced-motion:no-preference){
-  .hero h1,.hero-sub,.hero-actions,.hero-trust{animation:rise .5s cubic-bezier(0,.7,.3,1) both}
-  .hero-sub{animation-delay:.08s}
-  .hero-actions{animation-delay:.16s}
-  .hero-trust{animation-delay:.22s}
-  .hero-mockup{animation:rise .6s .28s cubic-bezier(0,.7,.3,1) both}
-  @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+  .hero-text>*{animation:rise .5s cubic-bezier(0,.7,.3,1) both}
+  .hero-text .hero-eyebrow{animation-delay:0s}
+  .hero-text h1{animation-delay:.07s}
+  .hero-text .hero-sub{animation-delay:.14s}
+  .hero-text .hero-actions{animation-delay:.2s}
+  .hero-text .hero-trust{animation-delay:.26s}
+  .hero-visual{animation:rise .7s .32s cubic-bezier(0,.7,.3,1) both}
+  @keyframes rise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+}
+@media(prefers-reduced-motion:reduce){
+  .hero-blob,.mockup-frame,.hero-eyebrow-dot{animation:none}
 }
 </style>
 </head>
@@ -213,66 +237,76 @@ footer{border-top:1px solid var(--line-soft);padding:clamp(24px,4vw,40px) clamp(
 
 <!-- HERO -->
 <section class="hero">
-  <div class="hero-eyebrow">
-    <span class="hero-eyebrow-dot"></span>
-    Private · Self-hosted · Yours
-  </div>
-  <h1>Your files.<br><em>Your server.</em><br>Your rules.</h1>
-  <p class="hero-sub">N-Drive is a private, self-hosted file workspace. No subscriptions, no third-party access, no telemetry — just your files running on your own server.</p>
-  <div class="hero-actions">
-    <a href="/" class="btn btn-primary btn-lg">Open workspace →</a>
-    <a href="/" class="btn btn-outline btn-lg">Sign in</a>
-  </div>
-  <div class="hero-trust">
-    <div class="hero-trust-item"><span>✓</span> No cloud dependency</div>
-    <div class="hero-trust-item"><span>✓</span> Checksum verified uploads</div>
-    <div class="hero-trust-item"><span>✓</span> JWT session protection</div>
-    <div class="hero-trust-item"><span>✓</span> Up to 5 GB per file</div>
+  <!-- Background elements -->
+  <div class="hero-blob hero-blob-1"></div>
+  <div class="hero-blob hero-blob-2"></div>
+  <div class="hero-blob hero-blob-3"></div>
+
+  <!-- Left: text -->
+  <div class="hero-text">
+    <div class="hero-eyebrow">
+      <span class="hero-eyebrow-dot"></span>
+      Private · Self-hosted · Yours
+    </div>
+    <h1>Your files.<br><em>Your server.</em><br>Your rules.</h1>
+    <p class="hero-sub">N-Drive is a private, self-hosted file workspace. No subscriptions, no third-party access, no telemetry — just your files running on your own server.</p>
+    <div class="hero-actions">
+      <a href="/" class="btn btn-primary btn-lg">Open workspace →</a>
+      <a href="/" class="btn btn-outline btn-lg">Sign in</a>
+    </div>
+    <div class="hero-trust">
+      <div class="hero-trust-item"><span>✓</span> No cloud dependency</div>
+      <div class="hero-trust-item"><span>✓</span> Checksum verified uploads</div>
+      <div class="hero-trust-item"><span>✓</span> JWT session protection</div>
+      <div class="hero-trust-item"><span>✓</span> Up to 5 GB per file</div>
+    </div>
   </div>
 
-  <!-- App mockup -->
-  <div class="hero-mockup" style="margin-top:56px">
-    <div class="mockup-glow"></div>
-    <div class="mockup-frame">
-      <div class="mockup-bar">
-        <div class="mockup-dot"></div>
-        <div class="mockup-dot"></div>
-        <div class="mockup-dot"></div>
-        <div class="mockup-url">🔒 your-server.local:8080</div>
-      </div>
-      <div class="mockup-body">
-        <div class="mockup-sidebar">
-          <div class="mock-nav-item active"><span class="mock-nav-icon">▦</span>Overview</div>
-          <div class="mock-nav-item"><span class="mock-nav-icon">▰</span>My files</div>
-          <div class="mock-nav-item"><span class="mock-nav-icon">♲</span>Trash</div>
+  <!-- Right: floating mockup -->
+  <div class="hero-visual">
+    <div class="hero-mockup">
+      <div class="mockup-glow"></div>
+      <div class="mockup-frame">
+        <div class="mockup-bar">
+          <div class="mockup-dot"></div>
+          <div class="mockup-dot"></div>
+          <div class="mockup-dot"></div>
+          <div class="mockup-url">🔒 your-server.local:8080</div>
         </div>
-        <div class="mockup-main">
-          <div class="mock-topbar">
-            <span class="mock-title">Overview</span>
-            <div class="mock-actions">
-              <div class="mock-btn secondary">＋ New folder</div>
-              <div class="mock-btn primary">↑ Upload</div>
-            </div>
+        <div class="mockup-body">
+          <div class="mockup-sidebar">
+            <div class="mock-nav-item active"><span class="mock-nav-icon">▦</span>Overview</div>
+            <div class="mock-nav-item"><span class="mock-nav-icon">▰</span>My files</div>
+            <div class="mock-nav-item"><span class="mock-nav-icon">♲</span>Trash</div>
           </div>
-          <div class="mock-stats">
-            <div class="mock-stat"><div class="mock-stat-label">Files</div><div class="mock-stat-val">284</div></div>
-            <div class="mock-stat"><div class="mock-stat-label">Folders</div><div class="mock-stat-val">32</div></div>
-            <div class="mock-stat"><div class="mock-stat-label">Storage</div><div class="mock-stat-val">18 GB</div></div>
-            <div class="mock-stat"><div class="mock-stat-label">Trash</div><div class="mock-stat-val">3</div></div>
-          </div>
-          <div class="mock-files">
-            <div class="mock-file-head"><span>Name</span><span>Type</span><span>Modified</span><span></span></div>
-            <div class="mock-file-row">
-              <div class="mock-file-name"><div class="mock-file-icon folder">▰</div><span>Design assets</span></div>
-              <span class="mock-muted">Folder</span><span class="mock-muted">Aug 5</span><span class="mock-more">⋯</span>
+          <div class="mockup-main">
+            <div class="mock-topbar">
+              <span class="mock-title">Overview</span>
+              <div class="mock-actions">
+                <div class="mock-btn secondary">＋ New folder</div>
+                <div class="mock-btn primary">↑ Upload</div>
+              </div>
             </div>
-            <div class="mock-file-row">
-              <div class="mock-file-name"><div class="mock-file-icon img">▧</div><span>hero-banner.png</span></div>
-              <span class="mock-muted">image/png</span><span class="mock-muted">Aug 4</span><span class="mock-more">⋯</span>
+            <div class="mock-stats">
+              <div class="mock-stat"><div class="mock-stat-label">Files</div><div class="mock-stat-val">284</div></div>
+              <div class="mock-stat"><div class="mock-stat-label">Folders</div><div class="mock-stat-val">32</div></div>
+              <div class="mock-stat"><div class="mock-stat-label">Storage</div><div class="mock-stat-val">18 GB</div></div>
+              <div class="mock-stat"><div class="mock-stat-label">Trash</div><div class="mock-stat-val">3</div></div>
             </div>
-            <div class="mock-file-row">
-              <div class="mock-file-name"><div class="mock-file-icon pdf">▥</div><span>brief-v2.pdf</span></div>
-              <span class="mock-muted">application/pdf</span><span class="mock-muted">Aug 3</span><span class="mock-more">⋯</span>
+            <div class="mock-files">
+              <div class="mock-file-head"><span>Name</span><span>Type</span><span>Modified</span><span></span></div>
+              <div class="mock-file-row">
+                <div class="mock-file-name"><div class="mock-file-icon folder">▰</div><span>Design assets</span></div>
+                <span class="mock-muted">Folder</span><span class="mock-muted">Aug 5</span><span class="mock-more">⋯</span>
+              </div>
+              <div class="mock-file-row">
+                <div class="mock-file-name"><div class="mock-file-icon img">▧</div><span>hero-banner.png</span></div>
+                <span class="mock-muted">image/png</span><span class="mock-muted">Aug 4</span><span class="mock-more">⋯</span>
+              </div>
+              <div class="mock-file-row">
+                <div class="mock-file-name"><div class="mock-file-icon pdf">▥</div><span>brief-v2.pdf</span></div>
+                <span class="mock-muted">application/pdf</span><span class="mock-muted">Aug 3</span><span class="mock-more">⋯</span>
+              </div>
             </div>
           </div>
         </div>
