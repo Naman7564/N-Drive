@@ -23,10 +23,6 @@ type fileHandler struct {
 	serviceMaxBytes int64
 }
 
-func userID(r *http.Request) (string, bool) {
-	claims, ok := claimsFromContext(r)
-	return claims.Subject, ok
-}
 func page(r *http.Request) (int, int) {
 	limit := 50
 	offset := 0
@@ -44,13 +40,8 @@ func page(r *http.Request) (int, int) {
 func encodeData(w http.ResponseWriter, value any) { writeJSON(w, http.StatusOK, value) }
 
 func (h *fileHandler) listFolders(w http.ResponseWriter, r *http.Request) {
-	uid, ok := userID(r)
-	if !ok {
-		writeError(w, 401, "authentication required")
-		return
-	}
 	limit, offset := page(r)
-	items, err := h.repo.ListFolders(r.Context(), uid, r.URL.Query().Get("parent_id"), limit, offset)
+	items, err := h.repo.ListFolders(r.Context(), r.URL.Query().Get("parent_id"), limit, offset)
 	if err != nil {
 		writeError(w, 500, "could not list folders")
 		return
@@ -58,11 +49,6 @@ func (h *fileHandler) listFolders(w http.ResponseWriter, r *http.Request) {
 	encodeData(w, map[string]any{"items": items, "limit": limit, "offset": offset})
 }
 func (h *fileHandler) createFolder(w http.ResponseWriter, r *http.Request) {
-	uid, ok := userID(r)
-	if !ok {
-		writeError(w, 401, "authentication required")
-		return
-	}
 	var body struct {
 		ParentID string `json:"parent_id"`
 		Name     string `json:"name"`
@@ -70,7 +56,7 @@ func (h *fileHandler) createFolder(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	item, err := h.service.CreateFolder(r.Context(), uid, body.ParentID, strings.TrimSpace(body.Name))
+	item, err := h.service.CreateFolder(r.Context(), body.ParentID, strings.TrimSpace(body.Name))
 	if err != nil {
 		if errors.Is(err, repository.ErrConflict) {
 			writeError(w, 409, "folder already exists")
@@ -82,11 +68,6 @@ func (h *fileHandler) createFolder(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 201, item)
 }
 func (h *fileHandler) renameFolder(w http.ResponseWriter, r *http.Request) {
-	uid, ok := userID(r)
-	if !ok {
-		writeError(w, 401, "authentication required")
-		return
-	}
 	id := r.PathValue("id")
 	var body struct {
 		Name string `json:"name"`
@@ -94,7 +75,7 @@ func (h *fileHandler) renameFolder(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	if err := h.service.RenameFolder(r.Context(), uid, id, strings.TrimSpace(body.Name)); err != nil {
+	if err := h.service.RenameFolder(r.Context(), id, strings.TrimSpace(body.Name)); err != nil {
 		if errors.Is(err, repository.ErrConflict) {
 			writeError(w, 409, "folder already exists")
 		} else if strings.Contains(err.Error(), "folder name") {
@@ -107,12 +88,7 @@ func (h *fileHandler) renameFolder(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 func (h *fileHandler) deleteFolder(w http.ResponseWriter, r *http.Request) {
-	uid, ok := userID(r)
-	if !ok {
-		writeError(w, 401, "authentication required")
-		return
-	}
-	if err := h.repo.DeleteFolder(r.Context(), uid, r.PathValue("id")); err != nil {
+	if err := h.repo.DeleteFolder(r.Context(), r.PathValue("id")); err != nil {
 		if errors.Is(err, repository.ErrConflict) {
 			writeError(w, 409, "folder is not empty")
 		} else {
@@ -124,13 +100,6 @@ func (h *fileHandler) deleteFolder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *fileHandler) upload(w http.ResponseWriter, r *http.Request) {
-	uid, ok := userID(r)
-	if !ok {
-		writeError(w, 401, "authentication required")
-		return
-	}
-	// Leave room for multipart framing and form metadata while the store enforces
-	// the exact per-file limit on the streamed file content.
 	r.Body = http.MaxBytesReader(w, r.Body, h.storeMaxBytes()+1<<20)
 	reader, err := r.MultipartReader()
 	if err != nil {
@@ -156,7 +125,7 @@ func (h *fileHandler) upload(w http.ResponseWriter, r *http.Request) {
 		if part.FormName() != "file" {
 			continue
 		}
-		result, err = h.service.Upload(r.Context(), uid, folderID, part.FileName(), part.Header.Get("Content-Type"), part)
+		result, err = h.service.Upload(r.Context(), folderID, part.FileName(), part.Header.Get("Content-Type"), part)
 		if err != nil {
 			var maxBytesErr *http.MaxBytesError
 			if errors.Is(err, storage.ErrTooLarge) || errors.As(err, &maxBytesErr) {
@@ -177,13 +146,8 @@ func (h *fileHandler) upload(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 201, result)
 }
 func (h *fileHandler) listFiles(w http.ResponseWriter, r *http.Request) {
-	uid, ok := userID(r)
-	if !ok {
-		writeError(w, 401, "authentication required")
-		return
-	}
 	limit, offset := page(r)
-	items, err := h.repo.ListFiles(r.Context(), uid, r.URL.Query().Get("folder_id"), limit, offset)
+	items, err := h.repo.ListFiles(r.Context(), r.URL.Query().Get("folder_id"), limit, offset)
 	if err != nil {
 		writeError(w, 500, "could not list files")
 		return
@@ -191,12 +155,7 @@ func (h *fileHandler) listFiles(w http.ResponseWriter, r *http.Request) {
 	encodeData(w, map[string]any{"items": items, "limit": limit, "offset": offset})
 }
 func (h *fileHandler) download(w http.ResponseWriter, r *http.Request) {
-	uid, ok := userID(r)
-	if !ok {
-		writeError(w, 401, "authentication required")
-		return
-	}
-	item, err := h.repo.FindFile(r.Context(), uid, r.PathValue("id"))
+	item, err := h.repo.FindFile(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeError(w, 404, "file not found")
 		return
@@ -209,22 +168,17 @@ func (h *fileHandler) download(w http.ResponseWriter, r *http.Request) {
 	defer file.Close()
 	w.Header().Set("Content-Type", item.ContentType)
 	w.Header().Set("Content-Disposition", "attachment; filename="+strconv.Quote(item.Name))
-	_ = h.repo.Audit(r.Context(), repository.AuditEvent{ID: uuid.NewString(), UserID: uid, Action: "download", ResourceID: item.ID, CreatedAt: now()})
+	_ = h.repo.Audit(r.Context(), repository.AuditEvent{ID: uuid.NewString(), Action: "download", ResourceID: item.ID, CreatedAt: now()})
 	http.ServeContent(w, r, item.Name, item.UpdatedAt, file)
 }
 func (h *fileHandler) copyFile(w http.ResponseWriter, r *http.Request) {
-	uid, ok := userID(r)
-	if !ok {
-		writeError(w, 401, "authentication required")
-		return
-	}
 	var body struct {
 		FolderID string `json:"folder_id"`
 	}
 	if r.Body != nil {
 		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body)
 	}
-	item, err := h.service.CopyFile(r.Context(), uid, r.PathValue("id"), body.FolderID)
+	item, err := h.service.CopyFile(r.Context(), r.PathValue("id"), body.FolderID)
 	if err != nil {
 		writeError(w, 404, "file not found")
 		return
@@ -232,61 +186,41 @@ func (h *fileHandler) copyFile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 201, item)
 }
 func (h *fileHandler) renameFile(w http.ResponseWriter, r *http.Request) {
-	uid, ok := userID(r)
-	if !ok {
-		writeError(w, 401, "authentication required")
-		return
-	}
 	var body struct {
 		Name string `json:"name"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	if err := h.service.RenameFile(r.Context(), uid, r.PathValue("id"), strings.TrimSpace(body.Name)); err != nil {
+	if err := h.service.RenameFile(r.Context(), r.PathValue("id"), strings.TrimSpace(body.Name)); err != nil {
 		writeError(w, 404, "file not found")
 		return
 	}
 	w.WriteHeader(204)
 }
 func (h *fileHandler) moveFile(w http.ResponseWriter, r *http.Request) {
-	uid, ok := userID(r)
-	if !ok {
-		writeError(w, 401, "authentication required")
-		return
-	}
 	var body struct {
 		FolderID string `json:"folder_id"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	if err := h.service.MoveFile(r.Context(), uid, r.PathValue("id"), body.FolderID); err != nil {
+	if err := h.service.MoveFile(r.Context(), r.PathValue("id"), body.FolderID); err != nil {
 		writeError(w, 404, "file or folder not found")
 		return
 	}
 	w.WriteHeader(204)
 }
 func (h *fileHandler) deleteFile(w http.ResponseWriter, r *http.Request) {
-	uid, ok := userID(r)
-	if !ok {
-		writeError(w, 401, "authentication required")
-		return
-	}
-	if err := h.service.DeleteFile(r.Context(), uid, r.PathValue("id")); err != nil {
+	if err := h.service.DeleteFile(r.Context(), r.PathValue("id")); err != nil {
 		writeError(w, 404, "file not found")
 		return
 	}
 	w.WriteHeader(204)
 }
 func (h *fileHandler) trash(w http.ResponseWriter, r *http.Request) {
-	uid, ok := userID(r)
-	if !ok {
-		writeError(w, 401, "authentication required")
-		return
-	}
 	limit, offset := page(r)
-	items, err := h.repo.ListTrash(r.Context(), uid, limit, offset)
+	items, err := h.repo.ListTrash(r.Context(), limit, offset)
 	if err != nil {
 		writeError(w, 500, "could not list trash")
 		return
@@ -294,37 +228,22 @@ func (h *fileHandler) trash(w http.ResponseWriter, r *http.Request) {
 	encodeData(w, map[string]any{"items": items, "limit": limit, "offset": offset})
 }
 func (h *fileHandler) restore(w http.ResponseWriter, r *http.Request) {
-	uid, ok := userID(r)
-	if !ok {
-		writeError(w, 401, "authentication required")
-		return
-	}
-	if err := h.service.RestoreFile(r.Context(), uid, r.PathValue("id")); err != nil {
+	if err := h.service.RestoreFile(r.Context(), r.PathValue("id")); err != nil {
 		writeError(w, 404, "trash item not found")
 		return
 	}
 	w.WriteHeader(204)
 }
 func (h *fileHandler) purge(w http.ResponseWriter, r *http.Request) {
-	uid, ok := userID(r)
-	if !ok {
-		writeError(w, 401, "authentication required")
-		return
-	}
-	if err := h.service.PermanentlyDelete(r.Context(), uid, r.PathValue("id")); err != nil {
+	if err := h.service.PermanentlyDelete(r.Context(), r.PathValue("id")); err != nil {
 		writeError(w, 404, "trash item not found")
 		return
 	}
 	w.WriteHeader(204)
 }
 func (h *fileHandler) search(w http.ResponseWriter, r *http.Request) {
-	uid, ok := userID(r)
-	if !ok {
-		writeError(w, 401, "authentication required")
-		return
-	}
 	limit, offset := page(r)
-	items, err := h.repo.Search(r.Context(), uid, r.URL.Query().Get("q"), limit, offset)
+	items, err := h.repo.Search(r.Context(), r.URL.Query().Get("q"), limit, offset)
 	if err != nil {
 		writeError(w, 500, "search failed")
 		return
@@ -332,12 +251,7 @@ func (h *fileHandler) search(w http.ResponseWriter, r *http.Request) {
 	encodeData(w, map[string]any{"items": items, "limit": limit, "offset": offset})
 }
 func (h *fileHandler) dashboard(w http.ResponseWriter, r *http.Request) {
-	uid, ok := userID(r)
-	if !ok {
-		writeError(w, 401, "authentication required")
-		return
-	}
-	data, err := h.repo.Dashboard(r.Context(), uid)
+	data, err := h.repo.Dashboard(r.Context())
 	if err != nil {
 		writeError(w, 500, "dashboard unavailable")
 		return

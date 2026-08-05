@@ -2,14 +2,12 @@ package httpapi
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strings"
 	"time"
 
 	"fileservice/internal/auth"
 	"fileservice/internal/middleware"
-	"fileservice/internal/repository"
 	"fileservice/internal/service"
 )
 
@@ -20,32 +18,15 @@ type authHandler struct {
 }
 
 type credentialsRequest struct {
-	Email    string `json:"email"`
+	Username string `json:"username"`
 	Password string `json:"password"`
 }
 
 type authResponse struct {
 	UserID      string    `json:"user_id"`
-	Email       string    `json:"email"`
+	Username    string    `json:"username"`
 	AccessToken string    `json:"access_token"`
 	ExpiresAt   time.Time `json:"expires_at"`
-}
-
-func (h *authHandler) register(w http.ResponseWriter, r *http.Request) {
-	var request credentialsRequest
-	if !decodeJSON(w, r, &request) {
-		return
-	}
-	user, tokens, err := h.service.Register(r.Context(), request.Email, request.Password)
-	if err != nil {
-		if errors.Is(err, repository.ErrConflict) {
-			writeError(w, http.StatusConflict, "email already registered")
-			return
-		}
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	h.writeTokens(w, user, tokens)
 }
 
 func (h *authHandler) login(w http.ResponseWriter, r *http.Request) {
@@ -53,9 +34,9 @@ func (h *authHandler) login(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &request) {
 		return
 	}
-	user, tokens, err := h.service.Login(r.Context(), request.Email, request.Password)
+	user, tokens, err := h.service.Login(r.Context(), request.Username, request.Password)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid email or password")
+		writeError(w, http.StatusUnauthorized, "invalid username or password")
 		return
 	}
 	h.writeTokens(w, user, tokens)
@@ -103,7 +84,7 @@ func (h *authHandler) writeTokens(w http.ResponseWriter, user auth.User, tokens 
 	h.setCSRFToken(w)
 	h.setAccessCookie(w, tokens.AccessToken, tokens.ExpiresAt)
 	h.setRefreshCookie(w, tokens.RefreshToken, tokens.RefreshExpiresAt)
-	writeJSON(w, http.StatusOK, authResponse{UserID: user.ID, Email: user.Email, AccessToken: tokens.AccessToken, ExpiresAt: tokens.ExpiresAt})
+	writeJSON(w, http.StatusOK, authResponse{UserID: user.ID, Username: user.Username, AccessToken: tokens.AccessToken, ExpiresAt: tokens.ExpiresAt})
 }
 
 func (h *authHandler) setCSRFToken(w http.ResponseWriter) {

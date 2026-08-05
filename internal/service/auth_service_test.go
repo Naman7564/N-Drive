@@ -26,7 +26,7 @@ func newTestService(t *testing.T) *AuthService {
 
 func TestAuthServiceRefreshRotatesToken(t *testing.T) {
 	service := newTestService(t)
-	_, first, err := service.Register(context.Background(), "User@Example.com", "correct horse battery staple")
+	_, first, err := service.Login(context.Background(), "Naman", "7564")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestAuthServiceRefreshRotatesToken(t *testing.T) {
 
 func TestAuthServiceInvalidLoginIsGeneric(t *testing.T) {
 	service := newTestService(t)
-	if _, _, err := service.Login(context.Background(), "nobody@example.com", "wrong password"); err != auth.ErrInvalidCredentials {
+	if _, _, err := service.Login(context.Background(), "nobody", "wrong password"); err != auth.ErrInvalidCredentials {
 		t.Fatalf("error = %v, want invalid credentials", err)
 	}
 }

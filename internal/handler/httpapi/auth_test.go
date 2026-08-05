@@ -39,8 +39,8 @@ func TestAuthHTTPFlow(t *testing.T) {
 	httpClient := ts.Client()
 	httpClient.Jar = client
 
-	body := bytes.NewBufferString(`{"email":"user@example.com","password":"correct horse battery staple"}`)
-	request, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/auth/register", body)
+	body := bytes.NewBufferString(`{"username":"Naman","password":"7564"}`)
+	request, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/auth/login", body)
 	request.Header.Set("Content-Type", "application/json")
 	response, err := httpClient.Do(request)
 	if err != nil {
@@ -49,7 +49,7 @@ func TestAuthHTTPFlow(t *testing.T) {
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(response.Body)
-		t.Fatalf("register status = %d, body = %s", response.StatusCode, data)
+		t.Fatalf("login status = %d, body = %s", response.StatusCode, data)
 	}
 	var payload struct {
 		AccessToken string `json:"access_token"`

@@ -9,20 +9,18 @@ import (
 	"time"
 )
 
-// Folder is a user-owned directory.
+// Folder is a directory.
 type Folder struct {
 	ID        string    `json:"id"`
-	UserID    string    `json:"user_id"`
 	ParentID  string    `json:"parent_id,omitempty"`
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// File is a user-owned file metadata record.
+// File is a file metadata record.
 type File struct {
 	ID          string     `json:"id"`
-	UserID      string     `json:"user_id"`
 	FolderID    string     `json:"folder_id,omitempty"`
 	StorageKey  string     `json:"-"`
 	Name        string     `json:"name"`
@@ -37,7 +35,6 @@ type File struct {
 // AuditEvent records a security-relevant action.
 type AuditEvent struct {
 	ID         string    `json:"id"`
-	UserID     string    `json:"user_id"`
 	Action     string    `json:"action"`
 	ResourceID string    `json:"resource_id"`
 	Metadata   string    `json:"metadata"`
@@ -52,18 +49,15 @@ func NewFileRepository(db *sql.DB) *FileRepository { return &FileRepository{db: 
 
 func (r *FileRepository) CreateFolder(ctx context.Context, folder Folder) error {
 	if folder.ParentID != "" {
-		var owner string
-		if err := r.db.QueryRowContext(ctx, `SELECT user_id FROM folders WHERE id=?`, folder.ParentID).Scan(&owner); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return ErrNotFound
-			}
+		var exists bool
+		if err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM folders WHERE id=?)`, folder.ParentID).Scan(&exists); err != nil {
 			return err
 		}
-		if owner != folder.UserID {
+		if !exists {
 			return ErrNotFound
 		}
 	}
-	_, err := r.db.ExecContext(ctx, `INSERT INTO folders (id,user_id,parent_id,name,created_at,updated_at) VALUES (?,?,?,?,?,?)`, folder.ID, folder.UserID, nullableString(folder.ParentID), folder.Name, stamp(folder.CreatedAt), stamp(folder.UpdatedAt))
+	_, err := r.db.ExecContext(ctx, `INSERT INTO folders (id,parent_id,name,created_at,updated_at) VALUES (?,?,?,?,?)`, folder.ID, nullableString(folder.ParentID), folder.Name, stamp(folder.CreatedAt), stamp(folder.UpdatedAt))
 	if err != nil {
 		if isConstraint(err) {
 			return ErrConflict
@@ -72,8 +66,8 @@ func (r *FileRepository) CreateFolder(ctx context.Context, folder Folder) error 
 	}
 	return nil
 }
-func (r *FileRepository) ListFolders(ctx context.Context, userID, parentID string, limit, offset int) ([]Folder, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id,user_id,COALESCE(parent_id,''),name,created_at,updated_at FROM folders WHERE user_id=? AND COALESCE(parent_id,'')=? ORDER BY name LIMIT ? OFFSET ?`, userID, parentID, limit, offset)
+func (r *FileRepository) ListFolders(ctx context.Context, parentID string, limit, offset int) ([]Folder, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id,COALESCE(parent_id,''),name,created_at,updated_at FROM folders WHERE COALESCE(parent_id,'')=? ORDER BY name LIMIT ? OFFSET ?`, parentID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("list folders: %w", err)
 	}
@@ -82,7 +76,7 @@ func (r *FileRepository) ListFolders(ctx context.Context, userID, parentID strin
 	for rows.Next() {
 		var item Folder
 		var created, updated string
-		if err := rows.Scan(&item.ID, &item.UserID, &item.ParentID, &item.Name, &created, &updated); err != nil {
+		if err := rows.Scan(&item.ID, &item.ParentID, &item.Name, &created, &updated); err != nil {
 			return nil, err
 		}
 		item.CreatedAt = parseStamp(created)
@@ -91,10 +85,10 @@ func (r *FileRepository) ListFolders(ctx context.Context, userID, parentID strin
 	}
 	return result, rows.Err()
 }
-func (r *FileRepository) FindFolder(ctx context.Context, userID, id string) (Folder, error) {
+func (r *FileRepository) FindFolder(ctx context.Context, id string) (Folder, error) {
 	var item Folder
 	var created, updated string
-	err := r.db.QueryRowContext(ctx, `SELECT id,user_id,COALESCE(parent_id,''),name,created_at,updated_at FROM folders WHERE user_id=? AND id=?`, userID, id).Scan(&item.ID, &item.UserID, &item.ParentID, &item.Name, &created, &updated)
+	err := r.db.QueryRowContext(ctx, `SELECT id,COALESCE(parent_id,''),name,created_at,updated_at FROM folders WHERE id=?`, id).Scan(&item.ID, &item.ParentID, &item.Name, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Folder{}, ErrNotFound
 	}
@@ -105,8 +99,8 @@ func (r *FileRepository) FindFolder(ctx context.Context, userID, id string) (Fol
 	item.UpdatedAt = parseStamp(updated)
 	return item, nil
 }
-func (r *FileRepository) RenameFolder(ctx context.Context, userID, id, name string, now time.Time) error {
-	result, err := r.db.ExecContext(ctx, `UPDATE folders SET name=?,updated_at=? WHERE user_id=? AND id=?`, name, stamp(now), userID, id)
+func (r *FileRepository) RenameFolder(ctx context.Context, id, name string, now time.Time) error {
+	result, err := r.db.ExecContext(ctx, `UPDATE folders SET name=?,updated_at=? WHERE id=?`, name, stamp(now), id)
 	if err != nil {
 		return err
 	}
@@ -116,15 +110,15 @@ func (r *FileRepository) RenameFolder(ctx context.Context, userID, id, name stri
 	}
 	return nil
 }
-func (r *FileRepository) DeleteFolder(ctx context.Context, userID, id string) error {
+func (r *FileRepository) DeleteFolder(ctx context.Context, id string) error {
 	var children, files int
-	if err := r.db.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM folders WHERE user_id=? AND parent_id=?), (SELECT COUNT(*) FROM files WHERE user_id=? AND folder_id=?)`, userID, id, userID, id).Scan(&children, &files); err != nil {
+	if err := r.db.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM folders WHERE parent_id=?), (SELECT COUNT(*) FROM files WHERE folder_id=?)`, id, id).Scan(&children, &files); err != nil {
 		return err
 	}
 	if children > 0 || files > 0 {
 		return ErrConflict
 	}
-	result, err := r.db.ExecContext(ctx, `DELETE FROM folders WHERE user_id=? AND id=?`, userID, id)
+	result, err := r.db.ExecContext(ctx, `DELETE FROM folders WHERE id=?`, id)
 	if err != nil {
 		return err
 	}
@@ -135,10 +129,10 @@ func (r *FileRepository) DeleteFolder(ctx context.Context, userID, id string) er
 	return nil
 }
 
-func (r *FileRepository) FindActiveByChecksum(ctx context.Context, userID, checksum string) (File, error) {
+func (r *FileRepository) FindActiveByChecksum(ctx context.Context, checksum string) (File, error) {
 	var item File
 	var folder, created, updated string
-	err := r.db.QueryRowContext(ctx, `SELECT id,user_id,COALESCE(folder_id,''),storage_key,name,content_type,size,checksum,created_at,updated_at FROM files WHERE user_id=? AND checksum=? AND deleted_at IS NULL LIMIT 1`, userID, checksum).Scan(&item.ID, &item.UserID, &folder, &item.StorageKey, &item.Name, &item.ContentType, &item.Size, &item.Checksum, &created, &updated)
+	err := r.db.QueryRowContext(ctx, `SELECT id,COALESCE(folder_id,''),storage_key,name,content_type,size,checksum,created_at,updated_at FROM files WHERE checksum=? AND deleted_at IS NULL LIMIT 1`, checksum).Scan(&item.ID, &folder, &item.StorageKey, &item.Name, &item.ContentType, &item.Size, &item.Checksum, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return File{}, ErrNotFound
 	}
@@ -152,18 +146,15 @@ func (r *FileRepository) FindActiveByChecksum(ctx context.Context, userID, check
 }
 func (r *FileRepository) CreateFile(ctx context.Context, item File) error {
 	if item.FolderID != "" {
-		var owner string
-		if err := r.db.QueryRowContext(ctx, `SELECT user_id FROM folders WHERE id=?`, item.FolderID).Scan(&owner); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return ErrNotFound
-			}
+		var exists bool
+		if err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM folders WHERE id=?)`, item.FolderID).Scan(&exists); err != nil {
 			return err
 		}
-		if owner != item.UserID {
+		if !exists {
 			return ErrNotFound
 		}
 	}
-	_, err := r.db.ExecContext(ctx, `INSERT INTO files (id,user_id,folder_id,storage_key,name,content_type,size,checksum,created_at,updated_at,deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,NULL)`, item.ID, item.UserID, nullableString(item.FolderID), item.StorageKey, item.Name, item.ContentType, item.Size, item.Checksum, stamp(item.CreatedAt), stamp(item.UpdatedAt))
+	_, err := r.db.ExecContext(ctx, `INSERT INTO files (id,folder_id,storage_key,name,content_type,size,checksum,created_at,updated_at,deleted_at) VALUES (?,?,?,?,?,?,?,?,?,NULL)`, item.ID, nullableString(item.FolderID), item.StorageKey, item.Name, item.ContentType, item.Size, item.Checksum, stamp(item.CreatedAt), stamp(item.UpdatedAt))
 	if err != nil {
 		if isConstraint(err) {
 			return ErrConflict
@@ -172,10 +163,10 @@ func (r *FileRepository) CreateFile(ctx context.Context, item File) error {
 	}
 	return nil
 }
-func (r *FileRepository) FindFile(ctx context.Context, userID, id string) (File, error) {
+func (r *FileRepository) FindFile(ctx context.Context, id string) (File, error) {
 	var item File
 	var folder, created, updated, deleted sql.NullString
-	err := r.db.QueryRowContext(ctx, `SELECT id,user_id,COALESCE(folder_id,''),storage_key,name,content_type,size,checksum,created_at,updated_at,deleted_at FROM files WHERE user_id=? AND id=? AND deleted_at IS NULL`, userID, id).Scan(&item.ID, &item.UserID, &folder, &item.StorageKey, &item.Name, &item.ContentType, &item.Size, &item.Checksum, &created, &updated, &deleted)
+	err := r.db.QueryRowContext(ctx, `SELECT id,COALESCE(folder_id,''),storage_key,name,content_type,size,checksum,created_at,updated_at,deleted_at FROM files WHERE id=? AND deleted_at IS NULL`, id).Scan(&item.ID, &folder, &item.StorageKey, &item.Name, &item.ContentType, &item.Size, &item.Checksum, &created, &updated, &deleted)
 	if errors.Is(err, sql.ErrNoRows) {
 		return File{}, ErrNotFound
 	}
@@ -191,8 +182,8 @@ func (r *FileRepository) FindFile(ctx context.Context, userID, id string) (File,
 	}
 	return item, nil
 }
-func (r *FileRepository) ListFiles(ctx context.Context, userID, folderID string, limit, offset int) ([]File, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id,user_id,COALESCE(folder_id,''),storage_key,name,content_type,size,checksum,created_at,updated_at FROM files WHERE user_id=? AND COALESCE(folder_id,'')=? AND deleted_at IS NULL ORDER BY name LIMIT ? OFFSET ?`, userID, folderID, limit, offset)
+func (r *FileRepository) ListFiles(ctx context.Context, folderID string, limit, offset int) ([]File, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id,COALESCE(folder_id,''),storage_key,name,content_type,size,checksum,created_at,updated_at FROM files WHERE COALESCE(folder_id,'')=? AND deleted_at IS NULL ORDER BY name LIMIT ? OFFSET ?`, folderID, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +192,7 @@ func (r *FileRepository) ListFiles(ctx context.Context, userID, folderID string,
 	for rows.Next() {
 		var item File
 		var folder, created, updated string
-		if err := rows.Scan(&item.ID, &item.UserID, &folder, &item.StorageKey, &item.Name, &item.ContentType, &item.Size, &item.Checksum, &created, &updated); err != nil {
+		if err := rows.Scan(&item.ID, &folder, &item.StorageKey, &item.Name, &item.ContentType, &item.Size, &item.Checksum, &created, &updated); err != nil {
 			return nil, err
 		}
 		item.FolderID = folder
@@ -211,8 +202,8 @@ func (r *FileRepository) ListFiles(ctx context.Context, userID, folderID string,
 	}
 	return result, rows.Err()
 }
-func (r *FileRepository) SoftDeleteFile(ctx context.Context, userID, id string, now time.Time) error {
-	result, err := r.db.ExecContext(ctx, `UPDATE files SET deleted_at=?,updated_at=? WHERE user_id=? AND id=? AND deleted_at IS NULL`, stamp(now), stamp(now), userID, id)
+func (r *FileRepository) SoftDeleteFile(ctx context.Context, id string, now time.Time) error {
+	result, err := r.db.ExecContext(ctx, `UPDATE files SET deleted_at=?,updated_at=? WHERE id=? AND deleted_at IS NULL`, stamp(now), stamp(now), id)
 	if err != nil {
 		return err
 	}
@@ -222,8 +213,8 @@ func (r *FileRepository) SoftDeleteFile(ctx context.Context, userID, id string, 
 	}
 	return nil
 }
-func (r *FileRepository) RestoreFile(ctx context.Context, userID, id string) error {
-	result, err := r.db.ExecContext(ctx, `UPDATE files SET deleted_at=NULL WHERE user_id=? AND id=? AND deleted_at IS NOT NULL`, userID, id)
+func (r *FileRepository) RestoreFile(ctx context.Context, id string) error {
+	result, err := r.db.ExecContext(ctx, `UPDATE files SET deleted_at=NULL WHERE id=? AND deleted_at IS NOT NULL`, id)
 	if err != nil {
 		return err
 	}
@@ -233,8 +224,8 @@ func (r *FileRepository) RestoreFile(ctx context.Context, userID, id string) err
 	}
 	return nil
 }
-func (r *FileRepository) ListTrash(ctx context.Context, userID string, limit, offset int) ([]File, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id,user_id,COALESCE(folder_id,''),storage_key,name,content_type,size,checksum,created_at,updated_at,deleted_at FROM files WHERE user_id=? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT ? OFFSET ?`, userID, limit, offset)
+func (r *FileRepository) ListTrash(ctx context.Context, limit, offset int) ([]File, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id,COALESCE(folder_id,''),storage_key,name,content_type,size,checksum,created_at,updated_at,deleted_at FROM files WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -243,7 +234,7 @@ func (r *FileRepository) ListTrash(ctx context.Context, userID string, limit, of
 	for rows.Next() {
 		var item File
 		var folder, created, updated, deleted string
-		if err := rows.Scan(&item.ID, &item.UserID, &folder, &item.StorageKey, &item.Name, &item.ContentType, &item.Size, &item.Checksum, &created, &updated, &deleted); err != nil {
+		if err := rows.Scan(&item.ID, &folder, &item.StorageKey, &item.Name, &item.ContentType, &item.Size, &item.Checksum, &created, &updated, &deleted); err != nil {
 			return nil, err
 		}
 		item.FolderID = folder
@@ -255,10 +246,10 @@ func (r *FileRepository) ListTrash(ctx context.Context, userID string, limit, of
 	}
 	return result, rows.Err()
 }
-func (r *FileRepository) FindTrashedFile(ctx context.Context, userID, id string) (File, error) {
+func (r *FileRepository) FindTrashedFile(ctx context.Context, id string) (File, error) {
 	var item File
 	var folder, created, updated, deleted sql.NullString
-	err := r.db.QueryRowContext(ctx, `SELECT id,user_id,COALESCE(folder_id,''),storage_key,name,content_type,size,checksum,created_at,updated_at,deleted_at FROM files WHERE user_id=? AND id=? AND deleted_at IS NOT NULL`, userID, id).Scan(&item.ID, &item.UserID, &folder, &item.StorageKey, &item.Name, &item.ContentType, &item.Size, &item.Checksum, &created, &updated, &deleted)
+	err := r.db.QueryRowContext(ctx, `SELECT id,COALESCE(folder_id,''),storage_key,name,content_type,size,checksum,created_at,updated_at,deleted_at FROM files WHERE id=? AND deleted_at IS NOT NULL`, id).Scan(&item.ID, &folder, &item.StorageKey, &item.Name, &item.ContentType, &item.Size, &item.Checksum, &created, &updated, &deleted)
 	if errors.Is(err, sql.ErrNoRows) {
 		return File{}, ErrNotFound
 	}
@@ -272,8 +263,8 @@ func (r *FileRepository) FindTrashedFile(ctx context.Context, userID, id string)
 	item.DeletedAt = &value
 	return item, nil
 }
-func (r *FileRepository) DeleteFilePermanently(ctx context.Context, userID, id string) error {
-	result, err := r.db.ExecContext(ctx, `DELETE FROM files WHERE user_id=? AND id=? AND deleted_at IS NOT NULL`, userID, id)
+func (r *FileRepository) DeleteFilePermanently(ctx context.Context, id string) error {
+	result, err := r.db.ExecContext(ctx, `DELETE FROM files WHERE id=? AND deleted_at IS NOT NULL`, id)
 	if err != nil {
 		return err
 	}
@@ -283,9 +274,9 @@ func (r *FileRepository) DeleteFilePermanently(ctx context.Context, userID, id s
 	}
 	return nil
 }
-func (r *FileRepository) Search(ctx context.Context, userID, query string, limit, offset int) ([]File, error) {
+func (r *FileRepository) Search(ctx context.Context, query string, limit, offset int) ([]File, error) {
 	like := "%" + strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(query) + "%"
-	rows, err := r.db.QueryContext(ctx, `SELECT id,user_id,COALESCE(folder_id,''),storage_key,name,content_type,size,checksum,created_at,updated_at FROM files WHERE user_id=? AND deleted_at IS NULL AND name LIKE ? ESCAPE '!' ORDER BY name LIMIT ? OFFSET ?`, userID, like, limit, offset)
+	rows, err := r.db.QueryContext(ctx, `SELECT id,COALESCE(folder_id,''),storage_key,name,content_type,size,checksum,created_at,updated_at FROM files WHERE deleted_at IS NULL AND name LIKE ? ESCAPE '!' ORDER BY name LIMIT ? OFFSET ?`, like, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -294,7 +285,7 @@ func (r *FileRepository) Search(ctx context.Context, userID, query string, limit
 	for rows.Next() {
 		var item File
 		var folder, created, updated string
-		if err := rows.Scan(&item.ID, &item.UserID, &folder, &item.StorageKey, &item.Name, &item.ContentType, &item.Size, &item.Checksum, &created, &updated); err != nil {
+		if err := rows.Scan(&item.ID, &folder, &item.StorageKey, &item.Name, &item.ContentType, &item.Size, &item.Checksum, &created, &updated); err != nil {
 			return nil, err
 		}
 		item.FolderID = folder
@@ -304,22 +295,21 @@ func (r *FileRepository) Search(ctx context.Context, userID, query string, limit
 	}
 	return result, rows.Err()
 }
-func (r *FileRepository) Dashboard(ctx context.Context, userID string) (map[string]int64, error) {
+func (r *FileRepository) Dashboard(ctx context.Context) (map[string]int64, error) {
 	var files, folders, bytes, trash int64
-	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(size),0) FROM files WHERE user_id=? AND deleted_at IS NULL`, userID).Scan(&files, &bytes)
-	if err != nil {
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(size),0) FROM files WHERE deleted_at IS NULL`).Scan(&files, &bytes); err != nil {
 		return nil, err
 	}
-	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM folders WHERE user_id=?`, userID).Scan(&folders); err != nil {
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM folders`).Scan(&folders); err != nil {
 		return nil, err
 	}
-	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM files WHERE user_id=? AND deleted_at IS NOT NULL`, userID).Scan(&trash); err != nil {
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM files WHERE deleted_at IS NOT NULL`).Scan(&trash); err != nil {
 		return nil, err
 	}
 	return map[string]int64{"files": files, "folders": folders, "bytes": bytes, "trash": trash}, nil
 }
-func (r *FileRepository) RenameFile(ctx context.Context, userID, id, name string, now time.Time) error {
-	result, err := r.db.ExecContext(ctx, `UPDATE files SET name=?,updated_at=? WHERE user_id=? AND id=? AND deleted_at IS NULL`, name, stamp(now), userID, id)
+func (r *FileRepository) RenameFile(ctx context.Context, id, name string, now time.Time) error {
+	result, err := r.db.ExecContext(ctx, `UPDATE files SET name=?,updated_at=? WHERE id=? AND deleted_at IS NULL`, name, stamp(now), id)
 	if err != nil {
 		return err
 	}
@@ -329,17 +319,17 @@ func (r *FileRepository) RenameFile(ctx context.Context, userID, id, name string
 	}
 	return nil
 }
-func (r *FileRepository) MoveFile(ctx context.Context, userID, id, folderID string, now time.Time) error {
+func (r *FileRepository) MoveFile(ctx context.Context, id, folderID string, now time.Time) error {
 	if folderID != "" {
-		var owner string
-		if err := r.db.QueryRowContext(ctx, `SELECT user_id FROM folders WHERE id=?`, folderID).Scan(&owner); err != nil {
-			return ErrNotFound
+		var exists bool
+		if err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM folders WHERE id=?)`, folderID).Scan(&exists); err != nil {
+			return err
 		}
-		if owner != userID {
+		if !exists {
 			return ErrNotFound
 		}
 	}
-	result, err := r.db.ExecContext(ctx, `UPDATE files SET folder_id=?,updated_at=? WHERE user_id=? AND id=? AND deleted_at IS NULL`, nullableString(folderID), stamp(now), userID, id)
+	result, err := r.db.ExecContext(ctx, `UPDATE files SET folder_id=?,updated_at=? WHERE id=? AND deleted_at IS NULL`, nullableString(folderID), stamp(now), id)
 	if err != nil {
 		return err
 	}
@@ -350,7 +340,7 @@ func (r *FileRepository) MoveFile(ctx context.Context, userID, id, folderID stri
 	return nil
 }
 func (r *FileRepository) Audit(ctx context.Context, event AuditEvent) error {
-	_, err := r.db.ExecContext(ctx, `INSERT INTO audit_events (id,user_id,action,resource_id,metadata,created_at) VALUES (?,?,?,?,?,?)`, event.ID, event.UserID, event.Action, event.ResourceID, event.Metadata, stamp(event.CreatedAt))
+	_, err := r.db.ExecContext(ctx, `INSERT INTO audit_events (id,action,resource_id,metadata,created_at) VALUES (?,?,?,?,?)`, event.ID, event.Action, event.ResourceID, event.Metadata, stamp(event.CreatedAt))
 	return err
 }
 

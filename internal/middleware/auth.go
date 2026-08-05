@@ -21,7 +21,7 @@ const ClaimsKey contextKey = "claims"
 
 // Auth validates access tokens supplied by bearer headers or cookies.
 type SessionValidator interface {
-	ValidateSession(context.Context, string, string, time.Time) error
+	ValidateSession(context.Context, string, time.Time) error
 }
 
 // Auth validates access tokens and their active sessions.
@@ -54,7 +54,7 @@ func (a Auth) RequireAccessToken(next http.Handler) http.Handler {
 			writeAuthError(w)
 			return
 		}
-		if a.Sessions == nil || a.Sessions.ValidateSession(r.Context(), claims.ID, claims.Subject, time.Now().UTC()) != nil {
+		if a.Sessions == nil || a.Sessions.ValidateSession(r.Context(), claims.ID, time.Now().UTC()) != nil {
 			writeAuthError(w)
 			return
 		}

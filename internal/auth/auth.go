@@ -23,7 +23,7 @@ var (
 // User is the authentication identity persisted by the application.
 type User struct {
 	ID           string
-	Email        string
+	Username     string
 	PasswordHash string
 	CreatedAt    time.Time
 }
@@ -31,7 +31,6 @@ type User struct {
 // Session represents a refresh-token-backed login session.
 type Session struct {
 	ID        string
-	UserID    string
 	TokenHash string
 	ExpiresAt time.Time
 	RevokedAt *time.Time
@@ -71,8 +70,8 @@ func NewTokenManager(secret, issuer string, accessTTL, refreshTTL time.Duration)
 
 // HashPassword returns a bcrypt password hash.
 func HashPassword(password string) (string, error) {
-	if len(password) < 12 {
-		return "", fmt.Errorf("password must be at least 12 characters")
+	if password == "" {
+		return "", fmt.Errorf("password must not be empty")
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {

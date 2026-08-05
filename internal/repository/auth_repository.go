@@ -23,7 +23,7 @@ func NewAuthRepository(db *sql.DB) *AuthRepository { return &AuthRepository{db: 
 
 // CreateUser stores a new user.
 func (r *AuthRepository) CreateUser(ctx context.Context, user auth.User) error {
-	_, err := r.db.ExecContext(ctx, `INSERT INTO users (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)`, user.ID, user.Email, user.PasswordHash, user.CreatedAt.UTC().Format(time.RFC3339Nano))
+	_, err := r.db.ExecContext(ctx, `INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)`, user.ID, user.Username, user.PasswordHash, user.CreatedAt.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		if isConstraint(err) {
 			return ErrConflict
@@ -33,11 +33,11 @@ func (r *AuthRepository) CreateUser(ctx context.Context, user auth.User) error {
 	return nil
 }
 
-// FindUserByEmail retrieves a user by normalized email.
-func (r *AuthRepository) FindUserByEmail(ctx context.Context, email string) (auth.User, error) {
+// FindUserByUsername retrieves the user by username.
+func (r *AuthRepository) FindUserByUsername(ctx context.Context, username string) (auth.User, error) {
 	var user auth.User
 	var created string
-	err := r.db.QueryRowContext(ctx, `SELECT id, email, password_hash, created_at FROM users WHERE email = ?`, email).Scan(&user.ID, &user.Email, &user.PasswordHash, &created)
+	err := r.db.QueryRowContext(ctx, `SELECT id, username, password_hash, created_at FROM users WHERE username = ?`, username).Scan(&user.ID, &user.Username, &user.PasswordHash, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return auth.User{}, ErrNotFound
 	}
@@ -51,31 +51,9 @@ func (r *AuthRepository) FindUserByEmail(ctx context.Context, email string) (aut
 	return user, nil
 }
 
-// CreateUserAndSession atomically stores a user and its initial session.
-func (r *AuthRepository) CreateUserAndSession(ctx context.Context, user auth.User, session auth.Session) error {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin create user transaction: %w", err)
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO users (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)`, user.ID, user.Email, user.PasswordHash, user.CreatedAt.UTC().Format(time.RFC3339Nano)); err != nil {
-		if isConstraint(err) {
-			return ErrConflict
-		}
-		return fmt.Errorf("create user: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO sessions (id, user_id, token_hash, expires_at, revoked_at, created_at) VALUES (?, ?, ?, ?, ?, ?)`, session.ID, session.UserID, session.TokenHash, session.ExpiresAt.UTC().Format(time.RFC3339Nano), nullableTime(session.RevokedAt), session.CreatedAt.UTC().Format(time.RFC3339Nano)); err != nil {
-		return fmt.Errorf("create initial session: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit user transaction: %w", err)
-	}
-	return nil
-}
-
 // CreateSession stores a refresh-token session.
 func (r *AuthRepository) CreateSession(ctx context.Context, session auth.Session) error {
-	_, err := r.db.ExecContext(ctx, `INSERT INTO sessions (id, user_id, token_hash, expires_at, revoked_at, created_at) VALUES (?, ?, ?, ?, ?, ?)`, session.ID, session.UserID, session.TokenHash, session.ExpiresAt.UTC().Format(time.RFC3339Nano), nullableTime(session.RevokedAt), session.CreatedAt.UTC().Format(time.RFC3339Nano))
+	_, err := r.db.ExecContext(ctx, `INSERT INTO sessions (id, token_hash, expires_at, revoked_at, created_at) VALUES (?, ?, ?, ?, ?)`, session.ID, session.TokenHash, session.ExpiresAt.UTC().Format(time.RFC3339Nano), nullableTime(session.RevokedAt), session.CreatedAt.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
 	}
@@ -86,7 +64,7 @@ func (r *AuthRepository) CreateSession(ctx context.Context, session auth.Session
 func (r *AuthRepository) FindActiveSessionByTokenHash(ctx context.Context, tokenHash string, now time.Time) (auth.Session, error) {
 	var session auth.Session
 	var expires, revoked, created sql.NullString
-	err := r.db.QueryRowContext(ctx, `SELECT id, user_id, token_hash, expires_at, revoked_at, created_at FROM sessions WHERE token_hash = ?`, tokenHash).Scan(&session.ID, &session.UserID, &session.TokenHash, &expires, &revoked, &created)
+	err := r.db.QueryRowContext(ctx, `SELECT id, token_hash, expires_at, revoked_at, created_at FROM sessions WHERE token_hash = ?`, tokenHash).Scan(&session.ID, &session.TokenHash, &expires, &revoked, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return auth.Session{}, ErrNotFound
 	}
@@ -116,10 +94,10 @@ func (r *AuthRepository) FindActiveSessionByTokenHash(ctx context.Context, token
 }
 
 // ValidateSession confirms that an access-token session remains active.
-func (r *AuthRepository) ValidateSession(ctx context.Context, sessionID, userID string, now time.Time) error {
+func (r *AuthRepository) ValidateSession(ctx context.Context, sessionID string, now time.Time) error {
 	var expires string
 	var revoked sql.NullString
-	err := r.db.QueryRowContext(ctx, `SELECT expires_at, revoked_at FROM sessions WHERE id = ? AND user_id = ?`, sessionID, userID).Scan(&expires, &revoked)
+	err := r.db.QueryRowContext(ctx, `SELECT expires_at, revoked_at FROM sessions WHERE id = ?`, sessionID).Scan(&expires, &revoked)
 	if errors.Is(err, sql.ErrNoRows) {
 		return auth.ErrSessionRevoked
 	}
@@ -151,7 +129,7 @@ func (r *AuthRepository) RotateSession(ctx context.Context, oldSessionID string,
 	if count != 1 {
 		return auth.ErrSessionRevoked
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO sessions (id, user_id, token_hash, expires_at, revoked_at, created_at) VALUES (?, ?, ?, ?, ?, ?)`, replacement.ID, replacement.UserID, replacement.TokenHash, replacement.ExpiresAt.UTC().Format(time.RFC3339Nano), nullableTime(replacement.RevokedAt), replacement.CreatedAt.UTC().Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO sessions (id, token_hash, expires_at, revoked_at, created_at) VALUES (?, ?, ?, ?, ?)`, replacement.ID, replacement.TokenHash, replacement.ExpiresAt.UTC().Format(time.RFC3339Nano), nullableTime(replacement.RevokedAt), replacement.CreatedAt.UTC().Format(time.RFC3339Nano)); err != nil {
 		return fmt.Errorf("create rotated session: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
