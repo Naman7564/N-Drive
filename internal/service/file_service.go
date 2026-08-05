@@ -27,8 +27,9 @@ func NewFileService(repo *repository.FileRepository, store *storage.LocalStore) 
 
 // CreateFolder creates a folder.
 func (s *FileService) CreateFolder(ctx context.Context, parentID, name string) (repository.Folder, error) {
-	if name == "" || len(name) > 255 || strings.ContainsAny(name, "\\r\\n") {
-		return repository.Folder{}, fmt.Errorf("folder name is invalid")
+	name = strings.TrimSpace(name)
+	if err := validateFolderName(name); err != nil {
+		return repository.Folder{}, err
 	}
 	now := s.now().UTC()
 	item := repository.Folder{ID: uuid.NewString(), ParentID: parentID, Name: name, CreatedAt: now, UpdatedAt: now}
@@ -69,10 +70,21 @@ func (s *FileService) DeleteFile(ctx context.Context, id string) error {
 
 // RenameFolder changes a folder display name.
 func (s *FileService) RenameFolder(ctx context.Context, id, name string) error {
-	if name == "" || len(name) > 255 || strings.ContainsAny(name, "\\r\\n") {
-		return fmt.Errorf("folder name is invalid")
+	name = strings.TrimSpace(name)
+	if err := validateFolderName(name); err != nil {
+		return err
 	}
 	return s.repo.RenameFolder(ctx, id, name, s.now().UTC())
+}
+
+func validateFolderName(name string) error {
+	if name == "" || len(name) > 255 {
+		return fmt.Errorf("folder name is invalid")
+	}
+	if strings.ContainsAny(name, "\r\n/\\\x00") {
+		return fmt.Errorf("folder name is invalid")
+	}
+	return nil
 }
 
 // RestoreFile restores a trashed file.
