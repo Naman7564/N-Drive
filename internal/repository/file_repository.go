@@ -339,6 +339,19 @@ func (r *FileRepository) MoveFile(ctx context.Context, id, folderID string, now 
 	}
 	return nil
 }
+// auditRetention is how long audit events are kept before being pruned.
+const auditRetention = 90 * 24 * time.Hour
+
+// PruneAudit deletes audit events older than the retention window.
+func (r *FileRepository) PruneAudit(ctx context.Context, now time.Time) (int64, error) {
+	result, err := r.db.ExecContext(ctx, `DELETE FROM audit_events WHERE created_at <= ?`, now.Add(-auditRetention).UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return 0, fmt.Errorf("prune audit events: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	return n, nil
+}
+
 func (r *FileRepository) Audit(ctx context.Context, event AuditEvent) error {
 	_, err := r.db.ExecContext(ctx, `INSERT INTO audit_events (id,action,resource_id,metadata,created_at) VALUES (?,?,?,?,?)`, event.ID, event.Action, event.ResourceID, event.Metadata, stamp(event.CreatedAt))
 	return err

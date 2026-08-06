@@ -51,6 +51,24 @@ func (r *AuthRepository) FindUserByUsername(ctx context.Context, username string
 	return user, nil
 }
 
+// FindUserByID retrieves the user by ID.
+func (r *AuthRepository) FindUserByID(ctx context.Context, id string) (auth.User, error) {
+	var user auth.User
+	var created string
+	err := r.db.QueryRowContext(ctx, `SELECT id, username, password_hash, created_at FROM users WHERE id = ?`, id).Scan(&user.ID, &user.Username, &user.PasswordHash, &created)
+	if errors.Is(err, sql.ErrNoRows) {
+		return auth.User{}, ErrNotFound
+	}
+	if err != nil {
+		return auth.User{}, fmt.Errorf("find user: %w", err)
+	}
+	user.CreatedAt, err = time.Parse(time.RFC3339Nano, created)
+	if err != nil {
+		return auth.User{}, fmt.Errorf("parse user creation time: %w", err)
+	}
+	return user, nil
+}
+
 // CreateSession stores a refresh-token session.
 func (r *AuthRepository) CreateSession(ctx context.Context, session auth.Session) error {
 	_, err := r.db.ExecContext(ctx, `INSERT INTO sessions (id, token_hash, expires_at, revoked_at, created_at) VALUES (?, ?, ?, ?, ?)`, session.ID, session.TokenHash, session.ExpiresAt.UTC().Format(time.RFC3339Nano), nullableTime(session.RevokedAt), session.CreatedAt.UTC().Format(time.RFC3339Nano))
@@ -148,6 +166,22 @@ func (r *AuthRepository) RevokeSession(ctx context.Context, sessionID string, no
 		return ErrNotFound
 	}
 	return nil
+}
+
+// sessionRevokedRetention is how long revoked sessions are kept before being
+// pruned. Recently revoked rows are retained so refresh-token reuse remains
+// detectable; expired sessions are pruned regardless of retention.
+const sessionRevokedRetention = 7 * 24 * time.Hour
+
+// PruneSessions deletes expired sessions and sessions revoked longer than the
+// retention window, keeping the sessions table bounded over time.
+func (r *AuthRepository) PruneSessions(ctx context.Context, now time.Time) (int64, error) {
+	result, err := r.db.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at <= ? OR (revoked_at IS NOT NULL AND revoked_at <= ?)`, now.UTC().Format(time.RFC3339Nano), now.Add(-sessionRevokedRetention).UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return 0, fmt.Errorf("prune sessions: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	return n, nil
 }
 
 func nullableTime(value *time.Time) any {

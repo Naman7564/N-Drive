@@ -66,6 +66,23 @@ func (h *authHandler) refresh(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"access_token": tokens.AccessToken, "expires_at": tokens.ExpiresAt})
 }
 
+func (h *authHandler) me(w http.ResponseWriter, r *http.Request) {
+	claims, ok := claimsFromContext(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	user, err := h.service.Me(r.Context(), claims.Subject)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	// Re-issue the CSRF cookie so cookie-auth clients keep a fresh token
+	// across reloads instead of letting it lapse within the refresh lifetime.
+	h.setCSRFToken(w)
+	writeJSON(w, http.StatusOK, authResponse{UserID: user.ID, Username: user.Username, ExpiresAt: claims.ExpiresAt.Time})
+}
+
 func (h *authHandler) logout(w http.ResponseWriter, r *http.Request) {
 	claims, ok := claimsFromContext(r)
 	if !ok {

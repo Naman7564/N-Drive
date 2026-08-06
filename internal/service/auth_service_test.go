@@ -42,6 +42,23 @@ func TestAuthServiceRefreshRotatesToken(t *testing.T) {
 	}
 }
 
+func TestAuthServiceMe(t *testing.T) {
+	service := newTestService(t)
+	user, err := service.Me(context.Background(), singleUserID)
+	if err != nil {
+		t.Fatalf("me: %v", err)
+	}
+	if user.Username != "Naman" {
+		t.Fatalf("username = %q, want Naman", user.Username)
+	}
+	if _, err := service.Me(context.Background(), "missing-user"); err == nil {
+		t.Fatal("me for unknown user succeeded")
+	}
+	if _, err := service.Me(context.Background(), ""); err == nil {
+		t.Fatal("me for empty user succeeded")
+	}
+}
+
 func TestAuthServiceInvalidLoginIsGeneric(t *testing.T) {
 	service := newTestService(t)
 	if _, _, err := service.Login(context.Background(), "nobody", "wrong password"); err != auth.ErrInvalidCredentials {

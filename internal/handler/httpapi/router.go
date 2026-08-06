@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"fileservice/internal/auth"
 	"fileservice/internal/config"
@@ -40,6 +41,14 @@ func NewRouterWithCloser(ctx context.Context, logger *slog.Logger, cfg config.Co
 		panic(err)
 	}
 	fileRepository := repository.NewFileRepository(db)
+	// Prune housekeeping data at startup: expired sessions and old audit events.
+	// Failures are non-fatal; pruning resumes on the next boot.
+	if _, err := authRepository.PruneSessions(ctx, time.Now().UTC()); err != nil {
+		logger.Warn("prune sessions", "error", err)
+	}
+	if _, err := fileRepository.PruneAudit(ctx, time.Now().UTC()); err != nil {
+		logger.Warn("prune audit events", "error", err)
+	}
 	fileService := service.NewFileService(fileRepository, store)
 	fileHandler := &fileHandler{service: fileService, repo: fileRepository, store: store, serviceMaxBytes: cfg.Storage.MaxBytes}
 	protected := func(handler http.Handler) http.Handler { return authMiddleware.RequireAccessToken(handler) }
@@ -52,6 +61,7 @@ func NewRouterWithCloser(ctx context.Context, logger *slog.Logger, cfg config.Co
 	mux.Handle("POST /api/auth/login", middleware.NewRateLimiter(cfg.Auth.LoginRateLimit, cfg.Auth.LoginRateWindow).Middleware(http.HandlerFunc(authHandler.login)))
 	mux.Handle("POST /api/auth/refresh", middleware.NewRateLimiter(cfg.Auth.RefreshRateLimit, cfg.Auth.RefreshRateWindow).Middleware(http.HandlerFunc(authHandler.refresh)))
 	mux.Handle("POST /api/auth/logout", protected(http.HandlerFunc(authHandler.logout)))
+	mux.Handle("GET /api/auth/me", protected(http.HandlerFunc(authHandler.me)))
 	mux.Handle("GET /api/folders", protected(http.HandlerFunc(fileHandler.listFolders)))
 	mux.Handle("POST /api/folders", protected(http.HandlerFunc(fileHandler.createFolder)))
 	mux.Handle("PATCH /api/folders/{id}", protected(http.HandlerFunc(fileHandler.renameFolder)))

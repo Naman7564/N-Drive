@@ -67,6 +67,18 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (auth.To
 	return tokens, nil
 }
 
+// Me returns the identity for a validated session's user.
+func (s *AuthService) Me(ctx context.Context, userID string) (auth.User, error) {
+	if strings.TrimSpace(userID) == "" {
+		return auth.User{}, auth.ErrInvalidToken
+	}
+	user, err := s.repository.FindUserByID(ctx, userID)
+	if err != nil {
+		return auth.User{}, err
+	}
+	return user, nil
+}
+
 // Logout revokes the session represented by the access token subject/session ID.
 func (s *AuthService) Logout(ctx context.Context, sessionID string) error {
 	if strings.TrimSpace(sessionID) == "" {
