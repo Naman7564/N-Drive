@@ -12,7 +12,7 @@ import (
 
 func newPruneDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := database.Open(context.Background(), ":memory:")
+	db, err := database.Open(context.Background(), ":memory:", database.SeedCredentials{Username: "Naman", Password: "7564"})
 	if err != nil {
 		t.Fatal(err)
 	}

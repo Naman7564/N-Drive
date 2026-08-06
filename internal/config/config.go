@@ -28,7 +28,7 @@ type HTTPConfig struct {
 	MaxHeaderBytes    int
 }
 
-// AuthConfig controls token, cookie, and rate-limit behavior.
+// AuthConfig controls token, cookie, rate-limit, and account behavior.
 type AuthConfig struct {
 	JWTSecret         string
 	JWTIssuer         string
@@ -40,7 +40,21 @@ type AuthConfig struct {
 	LoginRateWindow   time.Duration
 	RefreshRateLimit  int
 	RefreshRateWindow time.Duration
+	// Username and Password seed the single user account when the database
+	// has no users yet. They are read from N_DRIVE_USERNAME / N_DRIVE_PASSWORD;
+	// the built-in values exist only for local development and are rejected
+	// in production.
+	Username string
+	Password string
 }
+
+// Default account credentials, used only when the environment variables are
+// unset. The password default is intentionally weak: it must never be used
+// outside local development.
+const (
+	defaultUsername = "Naman"
+	defaultPassword = "7564"
+)
 
 // DatabaseConfig controls the local SQLite database.
 type DatabaseConfig struct{ Path string }
@@ -77,6 +91,8 @@ func Load() (Config, error) {
 			LoginRateWindow:   getDuration("LOGIN_RATE_WINDOW", time.Minute),
 			RefreshRateLimit:  getInt("REFRESH_RATE_LIMIT", 10),
 			RefreshRateWindow: getDuration("REFRESH_RATE_WINDOW", time.Minute),
+			Username:          getString("N_DRIVE_USERNAME", defaultUsername),
+			Password:          getString("N_DRIVE_PASSWORD", defaultPassword),
 		},
 		Database: DatabaseConfig{Path: getString("DATABASE_PATH", "data/fileservice.db")},
 		Storage:  StorageConfig{Root: getString("STORAGE_ROOT", "data/objects"), MaxBytes: getInt64("UPLOAD_MAX_BYTES", 5<<30), AllowedMIMEs: nil},
@@ -106,6 +122,20 @@ func (c Config) Validate() error {
 	}
 	if strings.EqualFold(c.Environment, "production") && c.Auth.JWTSecret == "development-only-change-me-please-32-bytes!" {
 		return fmt.Errorf("JWT_SECRET must be changed in production")
+	}
+	if strings.TrimSpace(c.Auth.Username) == "" {
+		return fmt.Errorf("N_DRIVE_USERNAME must not be empty")
+	}
+	if c.Auth.Password == "" {
+		return fmt.Errorf("N_DRIVE_PASSWORD must not be empty")
+	}
+	if strings.EqualFold(c.Environment, "production") {
+		if c.Auth.Password == defaultPassword {
+			return fmt.Errorf("N_DRIVE_PASSWORD must be changed in production")
+		}
+		if len(c.Auth.Password) < 8 {
+			return fmt.Errorf("N_DRIVE_PASSWORD must be at least 8 characters in production")
+		}
 	}
 	if strings.EqualFold(c.Environment, "production") && !c.Auth.SecureCookies {
 		return fmt.Errorf("SECURE_COOKIES must be enabled in production")

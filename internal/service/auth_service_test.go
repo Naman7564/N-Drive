@@ -12,7 +12,7 @@ import (
 
 func newTestService(t *testing.T) *AuthService {
 	t.Helper()
-	db, err := database.Open(context.Background(), ":memory:")
+	db, err := database.Open(context.Background(), ":memory:", database.SeedCredentials{Username: "Naman", Password: "7564"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -13,15 +14,21 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// Single-user identity. The only predefined account in the application.
-const (
-	SingleUserID       = "single"
-	SingleUserUsername = "Naman"
-	SingleUserPassword = "7564"
-)
+// SingleUserID is the fixed ID of the single account. The username and
+// password are supplied at boot via N_DRIVE_USERNAME / N_DRIVE_PASSWORD and
+// are only used to seed an empty database.
+const SingleUserID = "single"
 
-// Open opens the SQLite database and applies the current schema.
-func Open(ctx context.Context, path string) (*sql.DB, error) {
+// SeedCredentials is the account used to seed the users table when it is
+// empty. It is supplied at boot from configuration, never from source.
+type SeedCredentials struct {
+	Username string
+	Password string
+}
+
+// Open opens the SQLite database, applies the current schema, and seeds the
+// single user account when the users table is empty.
+func Open(ctx context.Context, path string, seed SeedCredentials) (*sql.DB, error) {
 	if path != ":memory:" {
 		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 			return nil, fmt.Errorf("create database directory: %w", err)
@@ -41,7 +48,7 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("ping sqlite database: %w", err)
 	}
-	if err := Migrate(ctx, db); err != nil {
+	if err := Migrate(ctx, db, seed); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -49,8 +56,9 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 }
 
 // Migrate applies the single-user schema, migrating legacy multi-user
-// databases in place, and guarantees the single predefined user exists.
-func Migrate(ctx context.Context, db *sql.DB) error {
+// databases in place, and seeds the single user account when the users
+// table is empty. Existing accounts are never modified or deleted.
+func Migrate(ctx context.Context, db *sql.DB, seed SeedCredentials) error {
 	legacy, err := isLegacySchema(ctx, db)
 	if err != nil {
 		return err
@@ -63,7 +71,7 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 	if _, err := db.ExecContext(ctx, singleUserSchema); err != nil {
 		return fmt.Errorf("migrate database: %w", err)
 	}
-	if err := seedSingleUser(ctx, db); err != nil {
+	if err := seedSingleUser(ctx, db, seed); err != nil {
 		return err
 	}
 	_, _ = db.ExecContext(ctx, `PRAGMA user_version = 1`)
@@ -133,14 +141,25 @@ COMMIT;
 	return nil
 }
 
-// seedSingleUser replaces any user rows with the single predefined account.
-func seedSingleUser(ctx context.Context, db *sql.DB) error {
-	hash, err := bcrypt.GenerateFromPassword([]byte(SingleUserPassword), bcrypt.DefaultCost)
+// seedSingleUser inserts the account from configuration only when the users
+// table is empty, so existing credentials are never overwritten or deleted.
+func seedSingleUser(ctx context.Context, db *sql.DB, seed SeedCredentials) error {
+	if strings.TrimSpace(seed.Username) == "" || seed.Password == "" {
+		return fmt.Errorf("seed credentials must not be empty (set N_DRIVE_USERNAME / N_DRIVE_PASSWORD)")
+	}
+	var count int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&count); err != nil {
+		return fmt.Errorf("count users: %w", err)
+	}
+	if count > 0 {
+		return nil
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(seed.Password), bcrypt.DefaultCost)
 	if err != nil {
-		return fmt.Errorf("hash single-user password: %w", err)
+		return fmt.Errorf("hash seed password: %w", err)
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := db.ExecContext(ctx, `DELETE FROM users; INSERT INTO users (id,username,password_hash,created_at) VALUES (?,?,?,?)`, SingleUserID, SingleUserUsername, string(hash), now); err != nil {
+	if _, err := db.ExecContext(ctx, `INSERT INTO users (id,username,password_hash,created_at) VALUES (?,?,?,?)`, SingleUserID, seed.Username, string(hash), now); err != nil {
 		return fmt.Errorf("seed single user: %w", err)
 	}
 	return nil

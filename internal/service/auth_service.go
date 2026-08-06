@@ -13,7 +13,9 @@ import (
 )
 
 // Single user ID used as the access-token subject. The application has
-// exactly one predefined account (database.SingleUserUsername).
+// exactly one account, seeded at boot from N_DRIVE_USERNAME /
+// N_DRIVE_PASSWORD when the database is empty. Keep in sync with
+// database.SingleUserID.
 const singleUserID = "single"
 
 // AuthService coordinates authentication business rules.

@@ -40,6 +40,22 @@ Then request `http://localhost:8080/health`.
 | `HTTP_READ_TIMEOUT` | `30m` |
 | `UPLOAD_MAX_BYTES` | `5368709120` (5 GiB) |
 | `STORAGE_ROOT` | `data/objects` |
+| `JWT_SECRET` | dev-only placeholder (must be changed, ≥ 32 bytes) |
+| `DATABASE_PATH` | `data/fileservice.db` |
+| `N_DRIVE_USERNAME` | `Naman` |
+| `N_DRIVE_PASSWORD` | `7564` (dev-only; rejected in production) |
+
+### Account seeding
+
+The single user account is read from `N_DRIVE_USERNAME` / `N_DRIVE_PASSWORD` and
+seeded **only when the `users` table is empty**. Existing accounts are never
+deleted or overwritten at boot. The built-in defaults are for local development
+only: in `production`, a non-default password of at least 8 characters is
+required, just like `JWT_SECRET`.
+
+To change the account of an existing database, set the variables, stop the
+server, delete (or back up) the database file, and start again — the new
+credentials are then seeded fresh.
 
 Uploads accept all detected file types by default. Set `AllowedMIMEs` when constructing a store if a deployment needs a narrower allowlist. Downloads remain forced to attachment disposition.
 

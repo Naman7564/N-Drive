@@ -21,7 +21,7 @@ func testConfig(t *testing.T) config.Config {
 	cfg := config.Config{
 		Environment: "test",
 		HTTP:        config.HTTPConfig{Address: ":0", ReadHeaderTimeout: 1, ReadTimeout: 1, WriteTimeout: 1, IdleTimeout: 1, ShutdownTimeout: 1, MaxHeaderBytes: 4096},
-		Auth:        config.AuthConfig{JWTSecret: "01234567890123456789012345678901", JWTIssuer: "fileservice-test", AccessTokenTTL: time.Minute, RefreshTokenTTL: time.Hour, LoginRateLimit: 20, LoginRateWindow: time.Minute, RefreshRateLimit: 20, RefreshRateWindow: time.Minute},
+		Auth:        config.AuthConfig{JWTSecret: "01234567890123456789012345678901", JWTIssuer: "fileservice-test", AccessTokenTTL: time.Minute, RefreshTokenTTL: time.Hour, LoginRateLimit: 20, LoginRateWindow: time.Minute, RefreshRateLimit: 20, RefreshRateWindow: time.Minute, Username: "Naman", Password: "7564"},
 		Database:    config.DatabaseConfig{Path: ":memory:"},
 		Storage:     config.StorageConfig{Root: t.TempDir(), MaxBytes: 1 << 20, AllowedMIMEs: []string{"text/plain"}},
 	}

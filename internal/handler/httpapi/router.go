@@ -17,14 +17,14 @@ import (
 
 // NewRouterWithCloser constructs the API and returns a handler plus its database closer.
 func NewRouterWithCloser(ctx context.Context, logger *slog.Logger, cfg config.Config) (http.Handler, func() error) {
-	if cfg.Auth.JWTSecret == "" || cfg.Database.Path == "" || cfg.Storage.Root == "" || cfg.Storage.MaxBytes == 0 {
+	if cfg.Auth.JWTSecret == "" || cfg.Auth.Username == "" || cfg.Auth.Password == "" || cfg.Database.Path == "" || cfg.Storage.Root == "" || cfg.Storage.MaxBytes == 0 {
 		loaded, err := config.Load()
 		if err != nil {
 			panic(err)
 		}
 		cfg = loaded
 	}
-	db, err := database.Open(ctx, cfg.Database.Path)
+	db, err := database.Open(ctx, cfg.Database.Path, database.SeedCredentials{Username: cfg.Auth.Username, Password: cfg.Auth.Password})
 	if err != nil {
 		panic(err)
 	}
