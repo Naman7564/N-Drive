@@ -13,7 +13,7 @@ This repository starts with the first incremental feature: a production-minded G
 - Conservative security headers
 - Clean boundaries for handlers, middleware, repositories, services, storage, sessions, validation, and Ent/database integration
 - SQLite-backed authentication with bcrypt passwords, JWT access tokens, rotating refresh sessions, bearer/cookie transport, CSRF checks for cookie mutations, and login rate limiting
-- Authenticated folders, trash, local file storage, streaming upload/download, broad file-type support with MIME detection, 5 GB per-file size checks, checksums, search, dashboard, and a minimal browser workspace
+- Authenticated folders, trash, local file storage, streaming upload/download, broad file-type support with MIME detection, 5 GB per-file size checks, xxHash checksums (duplicate detection and corruption checks), search, dashboard, and a minimal browser workspace
 
 Future adapters and collaboration features remain extension points: Ent/PostgreSQL, S3, WebDAV, sharing/versioning, organizations/RBAC, 2FA, workers, Redis, Docker, and Kubernetes.
 
@@ -59,11 +59,16 @@ credentials are then seeded fresh.
 
 Uploads accept all detected file types by default. Set `AllowedMIMEs` when constructing a store if a deployment needs a narrower allowlist. Downloads remain forced to attachment disposition.
 
+Checksums are xxHash64 (non-cryptographic) for speed on CPUs without SHA
+hardware acceleration; they power duplicate detection and corruption checks.
+Objects stored before this change keep their old SHA-256 checksums, so
+re-uploading an already-stored file only de-duplicates against new checksums.
+
 ## Planned increments
 
 1. ~~Authentication~~: password hashing, JWT access tokens, rotating refresh tokens, sessions, rate limiting, cookie/bearer transport, and CSRF behavior.
 2. ~~Persistence~~: SQLite development database, migrations, repositories, and indexes. Ent/PostgreSQL remain future adapters.
 3. ~~Folders and trash~~: authenticated CRUD, pagination, soft deletion, restore, and audit events.
-4. ~~Storage~~: secure paths, upload/download streaming, size/MIME/filename validation, SHA-256 checksums, and local file operations.
+4. ~~Storage~~: secure paths, upload/download streaming, size/MIME/filename validation, xxHash checksums, and local file operations.
 5. ~~Search/dashboard and frontend web UI~~: initial API endpoints and embedded dashboard shell are included.
 6. PostgreSQL/S3 adapters, sharing/versioning/RBAC/2FA/background jobs, and deployment packaging.

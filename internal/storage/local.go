@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/cespare/xxhash/v2"
 	"github.com/google/uuid"
 )
 
@@ -69,6 +69,11 @@ func SanitizeFilename(filename string) (string, error) {
 	return filename, nil
 }
 
+// copyBufferSize is the I/O chunk used when streaming objects in and out of
+// storage. A large buffer amortizes syscall overhead and matters most on slow
+// CPUs and disks; the default io.Copy buffer is only 32 KiB.
+const copyBufferSize = 1 << 20
+
 // Save streams a file into a generated object key and computes its checksum.
 func (s *LocalStore) Save(src io.Reader, filename, _ string) (FileInfo, error) {
 	cleanName, err := SanitizeFilename(filename)
@@ -90,9 +95,14 @@ func (s *LocalStore) Save(src io.Reader, filename, _ string) (FileInfo, error) {
 	}
 	cleanup := func() { _ = file.Close(); _ = os.Remove(path) }
 
-	hasher := sha256.New()
+	// xxhash64 is orders of magnitude cheaper than a software SHA-256 on CPUs
+	// without the SHA extensions (e.g. first-gen EPYC), where hashing alone
+	// can halve upload throughput. It still detects accidental corruption and
+	// powers duplicate detection; it is not a cryptographic digest.
+	hasher := xxhash.New()
 	writer := io.MultiWriter(file, hasher)
-	written, err := io.Copy(writer, io.LimitReader(src, s.maxBytes+1))
+	buffer := make([]byte, copyBufferSize)
+	written, err := io.CopyBuffer(writer, io.LimitReader(src, s.maxBytes+1), buffer)
 	if err != nil {
 		cleanup()
 		return FileInfo{}, fmt.Errorf("write object: %w", err)
@@ -112,7 +122,7 @@ func (s *LocalStore) Save(src io.Reader, filename, _ string) (FileInfo, error) {
 		_ = os.Remove(path)
 		return FileInfo{}, fmt.Errorf("close object: %w", err)
 	}
-	return FileInfo{Key: key, Filename: cleanName, Size: written, ContentType: contentType, Checksum: fmt.Sprintf("%x", hasher.Sum(nil))}, nil
+	return FileInfo{Key: key, Filename: cleanName, Size: written, ContentType: contentType, Checksum: fmt.Sprintf("%x", hasher.Sum64())}, nil
 }
 
 // Copy duplicates an object under a new generated key.

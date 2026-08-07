@@ -75,6 +75,7 @@ func (s *slowWrite) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 // downloads; without that, the stream is cut off mid-transfer.
 func TestDownloadSlowReaderStillCompletes(t *testing.T) {
 	cfg := testConfig(t)
+	cfg.Storage.MaxBytes = 4 << 20 // the test uploads a 4 MiB object
 	handler, closeDatabase := NewRouterWithCloser(context.Background(), slog.Default(), cfg)
 	defer closeDatabase()
 
@@ -117,10 +118,11 @@ func TestDownloadSlowReaderStillCompletes(t *testing.T) {
 		t.Fatal("login did not return an access token")
 	}
 
-	// Upload a 512 KiB text file so we have a real stored object to download.
-	// The size guarantees many chunk writes (io.Copy uses a 32 KiB buffer), so
-	// several of them are guaranteed to cross the simulated write deadline.
-	const fileSize = 512 << 10
+	// Upload a 4 MiB text file so we have a real stored object to download.
+	// The download route streams in 1 MiB chunks, so the size guarantees
+	// several chunk writes, each of which is guaranteed to cross the simulated
+	// write deadline.
+	const fileSize = 4 << 20
 	var uploadBody bytes.Buffer
 	writer := multipart.NewWriter(&uploadBody)
 	_ = writer.WriteField("folder_id", "")
@@ -148,7 +150,7 @@ func TestDownloadSlowReaderStillCompletes(t *testing.T) {
 		t.Fatal("upload did not return a file id")
 	}
 
-	// Download. The server's writes are delayed 120 ms each, so the ~1 s
+	// Download. The server's writes are delayed 120 ms each, so the ~0.5 s
 	// transfer outlives the 300 ms simulated write deadline and the stream
 	// must survive several deadline crossings mid-transfer.
 	downloadRequest, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/files/"+uploaded.ID+"/download", nil)
@@ -270,5 +272,207 @@ func TestUploadSlowBodyStillGetsResponse(t *testing.T) {
 	}
 	if file.Name != "slow.txt" {
 		t.Fatalf("uploaded file name = %q, want slow.txt", file.Name)
+	}
+}
+
+func TestSingleByteRange(t *testing.T) {
+	tests := []struct {
+		name       string
+		value      string
+		size       int64
+		wantStart  int64
+		wantLength int64
+		wantMode   int
+	}{
+		{"no header", "", 100, 0, 0, rangeIgnore},
+		{"non-byte unit", "items=0-10", 100, 0, 0, rangeIgnore},
+		{"multi range is ignored", "bytes=0-9,20-29", 100, 0, 0, rangeIgnore},
+		{"closed range", "bytes=10-19", 100, 10, 10, rangeServe},
+		{"open ended", "bytes=90-", 100, 90, 10, rangeServe},
+		{"end past EOF is clamped", "bytes=90-200", 100, 90, 10, rangeServe},
+		{"suffix", "bytes=-10", 100, 90, 10, rangeServe},
+		{"suffix longer than file", "bytes=-500", 100, 0, 100, rangeServe},
+		{"start beyond EOF is unsatisfiable", "bytes=100-", 100, 0, 0, rangeUnsatisfiable},
+		{"invalid syntax ignored", "bytes=abc-", 100, 0, 0, rangeIgnore},
+		{"reversed range ignored", "bytes=20-10", 100, 0, 0, rangeIgnore},
+		{"empty file ignores all ranges", "bytes=0-10", 0, 0, 0, rangeIgnore},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			start, length, mode := singleByteRange(tt.value, tt.size)
+			if start != tt.wantStart || length != tt.wantLength || mode != tt.wantMode {
+				t.Fatalf("singleByteRange(%q, %d) = (%d, %d, %d), want (%d, %d, %d)", tt.value, tt.size, start, length, mode, tt.wantStart, tt.wantLength, tt.wantMode)
+			}
+		})
+	}
+}
+
+// TestDownloadRange verifies the download route answers single-range requests
+// with 206 partial content and the right byte window, and 416 for ranges that
+// start past the end of the file.
+func TestDownloadRange(t *testing.T) {
+	cfg := testConfig(t)
+	handler, closeDatabase := NewRouterWithCloser(context.Background(), slog.Default(), cfg)
+	defer closeDatabase()
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	login, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/auth/login", bytes.NewBufferString(`{"username":"Naman","password":"7564"}`))
+	login.Header.Set("Content-Type", "application/json")
+	loginResponse, err := http.DefaultClient.Do(login)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.NewDecoder(loginResponse.Body).Decode(&payload); err != nil {
+		loginResponse.Body.Close()
+		t.Fatalf("decode login: %v", err)
+	}
+	loginResponse.Body.Close()
+
+	content := []byte("0123456789abcdefghij") // 20 bytes
+	var uploadBody bytes.Buffer
+	writer := multipart.NewWriter(&uploadBody)
+	_ = writer.WriteField("folder_id", "")
+	part, _ := writer.CreateFormFile("file", "range.txt")
+	if _, err := part.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	_ = writer.Close()
+	upload, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/files/upload", &uploadBody)
+	upload.Header.Set("Content-Type", writer.FormDataContentType())
+	upload.Header.Set("Authorization", "Bearer "+payload.AccessToken)
+	uploadResponse, err := http.DefaultClient.Do(upload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var uploaded struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(uploadResponse.Body).Decode(&uploaded); err != nil {
+		uploadResponse.Body.Close()
+		t.Fatalf("decode upload: %v", err)
+	}
+	uploadResponse.Body.Close()
+	if uploaded.ID == "" {
+		t.Fatal("upload did not return a file id")
+	}
+
+	get := func(rangeHeader string) (*http.Response, []byte) {
+		req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/files/"+uploaded.ID+"/download", nil)
+		req.Header.Set("Authorization", "Bearer "+payload.AccessToken)
+		if rangeHeader != "" {
+			req.Header.Set("Range", rangeHeader)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("download request: %v", err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return resp, body
+	}
+
+	resp, body := get("bytes=5-9")
+	if resp.StatusCode != http.StatusPartialContent {
+		t.Fatalf("range status = %d, want 206", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Content-Range"); got != "bytes 5-9/20" {
+		t.Fatalf("Content-Range = %q", got)
+	}
+	if got := resp.Header.Get("Content-Length"); got != "5" {
+		t.Fatalf("Content-Length = %q", got)
+	}
+	if string(body) != "56789" {
+		t.Fatalf("range body = %q, want 56789", body)
+	}
+
+	resp, body = get("bytes=15-")
+	if resp.StatusCode != http.StatusPartialContent || string(body) != "fghij" {
+		t.Fatalf("open-ended range: status=%d body=%q", resp.StatusCode, body)
+	}
+
+	resp, body = get("bytes=-5")
+	if resp.StatusCode != http.StatusPartialContent || string(body) != "fghij" {
+		t.Fatalf("suffix range: status=%d body=%q", resp.StatusCode, body)
+	}
+
+	resp, _ = get("bytes=100-")
+	if resp.StatusCode != http.StatusRequestedRangeNotSatisfiable {
+		t.Fatalf("out-of-range status = %d, want 416", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Content-Range"); got != "bytes */20" {
+		t.Fatalf("416 Content-Range = %q", got)
+	}
+
+	resp, body = get("")
+	if resp.StatusCode != http.StatusOK || string(body) != string(content) {
+		t.Fatalf("full download: status=%d body=%q", resp.StatusCode, body)
+	}
+}
+
+func TestDownloadHead(t *testing.T) {
+	cfg := testConfig(t)
+	handler, closeDatabase := NewRouterWithCloser(context.Background(), slog.Default(), cfg)
+	defer closeDatabase()
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	login, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/auth/login", bytes.NewBufferString(`{"username":"Naman","password":"7564"}`))
+	login.Header.Set("Content-Type", "application/json")
+	loginResponse, err := http.DefaultClient.Do(login)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.NewDecoder(loginResponse.Body).Decode(&payload); err != nil {
+		loginResponse.Body.Close()
+		t.Fatalf("decode login: %v", err)
+	}
+	loginResponse.Body.Close()
+
+	var uploadBody bytes.Buffer
+	writer := multipart.NewWriter(&uploadBody)
+	part, _ := writer.CreateFormFile("file", "head.txt")
+	if _, err := part.Write(bytes.Repeat([]byte{'x'}, 1000)); err != nil {
+		t.Fatal(err)
+	}
+	_ = writer.Close()
+	upload, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/files/upload", &uploadBody)
+	upload.Header.Set("Content-Type", writer.FormDataContentType())
+	upload.Header.Set("Authorization", "Bearer "+payload.AccessToken)
+	uploadResponse, err := http.DefaultClient.Do(upload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var uploaded struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(uploadResponse.Body).Decode(&uploaded); err != nil {
+		uploadResponse.Body.Close()
+		t.Fatalf("decode upload: %v", err)
+	}
+	uploadResponse.Body.Close()
+
+	req, _ := http.NewRequest(http.MethodHead, ts.URL+"/api/files/"+uploaded.ID+"/download", nil)
+	req.Header.Set("Authorization", "Bearer "+payload.AccessToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("HEAD status = %d, want 200", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Content-Length"); got != "1000" {
+		t.Fatalf("HEAD Content-Length = %q, want 1000", got)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if len(body) != 0 {
+		t.Fatalf("HEAD returned %d body bytes, want 0", len(body))
 	}
 }

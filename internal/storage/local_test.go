@@ -2,10 +2,11 @@ package storage
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"testing"
+
+	"github.com/cespare/xxhash/v2"
 )
 
 func TestLocalStoreDiskUsage(t *testing.T) {
@@ -40,8 +41,8 @@ func TestLocalStoreSecurity(t *testing.T) {
 	if item.Filename != "notes.txt" {
 		t.Fatalf("filename = %q", item.Filename)
 	}
-	want := sha256.Sum256([]byte("hello"))
-	if item.Checksum != fmt.Sprintf("%x", want[:]) {
+	want := xxhash.Sum64String("hello")
+	if item.Checksum != fmt.Sprintf("%x", want) {
 		t.Fatalf("checksum = %q", item.Checksum)
 	}
 	if _, err := store.Open("../../outside"); !errors.Is(err, ErrTraversal) {

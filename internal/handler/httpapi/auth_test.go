@@ -121,8 +121,10 @@ func TestAuthMe(t *testing.T) {
 		t.Fatal("me did not refresh the CSRF cookie")
 	}
 
-	// Clients without a session are rejected.
-	anonClient := ts.Client()
+	// Clients without a session are rejected. Note ts.Client() returns a
+	// shared client, so a brand-new client is required for a truly
+	// cookie-free request.
+	anonClient := &http.Client{}
 	anonRequest, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/auth/me", nil)
 	anonResponse, err := anonClient.Do(anonRequest)
 	if err != nil {

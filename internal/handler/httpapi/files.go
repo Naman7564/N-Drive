@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -178,8 +179,100 @@ func (h *fileHandler) download(w http.ResponseWriter, r *http.Request) {
 	defer file.Close()
 	w.Header().Set("Content-Type", item.ContentType)
 	w.Header().Set("Content-Disposition", "attachment; filename="+strconv.Quote(item.Name))
+	w.Header().Set("Accept-Ranges", "bytes")
 	_ = h.repo.Audit(r.Context(), repository.AuditEvent{ID: uuid.NewString(), Action: "download", ResourceID: item.ID, CreatedAt: now()})
-	http.ServeContent(w, r, item.Name, item.UpdatedAt, file)
+	serveRange(w, r, file, item.Size)
+}
+
+// downloadChunkSize is the I/O chunk used when streaming downloads. A large
+// buffer reduces syscalls and keeps throughput near the disk's raw read speed;
+// http.ServeContent copies with the default 32 KiB buffer.
+const downloadChunkSize = 1 << 20
+
+const (
+	rangeIgnore        = iota // serve the whole file
+	rangeServe                // serve a single satisfiable byte range
+	rangeUnsatisfiable        // valid range outside the file: answer 416
+)
+
+// singleByteRange parses an RFC 7233 single-range request. Malformed or
+// multi-range headers are ignored (the caller serves the whole file), while a
+// well-formed range that starts beyond the end of the file is reported as
+// unsatisfiable so the caller can answer 416.
+func singleByteRange(value string, size int64) (start, length int64, mode int) {
+	if value == "" || size <= 0 || !strings.HasPrefix(value, "bytes=") {
+		return 0, 0, rangeIgnore
+	}
+	spec := strings.TrimSpace(strings.TrimPrefix(value, "bytes="))
+	if spec == "" || strings.Contains(spec, ",") {
+		return 0, 0, rangeIgnore
+	}
+	dash := strings.IndexByte(spec, '-')
+	if dash < 0 {
+		return 0, 0, rangeIgnore
+	}
+	startText := strings.TrimSpace(spec[:dash])
+	endText := strings.TrimSpace(spec[dash+1:])
+	if startText == "" {
+		// Suffix range: the last n bytes.
+		n, err := strconv.ParseInt(endText, 10, 64)
+		if err != nil || n <= 0 {
+			return 0, 0, rangeIgnore
+		}
+		if n > size {
+			n = size
+		}
+		return size - n, n, rangeServe
+	}
+	start, err := strconv.ParseInt(startText, 10, 64)
+	if err != nil || start < 0 {
+		return 0, 0, rangeIgnore
+	}
+	if start >= size {
+		return 0, 0, rangeUnsatisfiable
+	}
+	end := size - 1
+	if endText != "" {
+		end, err = strconv.ParseInt(endText, 10, 64)
+		if err != nil || end < start {
+			return 0, 0, rangeIgnore
+		}
+		if end >= size {
+			end = size - 1
+		}
+	}
+	return start, end - start + 1, rangeServe
+}
+
+// serveRange writes the stored object, honoring a single HTTP Range request
+// and streaming the body in large chunks. HEAD requests get headers only.
+func serveRange(w http.ResponseWriter, r *http.Request, file io.ReadSeeker, size int64) {
+	start, length, mode := singleByteRange(r.Header.Get("Range"), size)
+	switch mode {
+	case rangeUnsatisfiable:
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", size))
+		w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+		return
+	case rangeServe:
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, start+length-1, size))
+		w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
+		w.WriteHeader(http.StatusPartialContent)
+		if r.Method == http.MethodHead {
+			return
+		}
+		if _, err := file.Seek(start, io.SeekStart); err != nil {
+			return
+		}
+		_, _ = io.CopyBuffer(w, io.LimitReader(file, length), make([]byte, downloadChunkSize))
+		return
+	default:
+		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+		w.WriteHeader(http.StatusOK)
+		if r.Method == http.MethodHead {
+			return
+		}
+		_, _ = io.CopyBuffer(w, file, make([]byte, downloadChunkSize))
+	}
 }
 func (h *fileHandler) copyFile(w http.ResponseWriter, r *http.Request) {
 	var body struct {
