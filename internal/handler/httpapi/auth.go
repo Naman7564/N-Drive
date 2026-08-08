@@ -23,10 +23,11 @@ type credentialsRequest struct {
 }
 
 type authResponse struct {
-	UserID      string    `json:"user_id"`
-	Username    string    `json:"username"`
-	AccessToken string    `json:"access_token"`
-	ExpiresAt   time.Time `json:"expires_at"`
+	UserID       string    `json:"user_id"`
+	Username     string    `json:"username"`
+	AccessToken  string    `json:"access_token"`
+	RefreshToken string    `json:"refresh_token,omitempty"`
+	ExpiresAt    time.Time `json:"expires_at"`
 }
 
 func (h *authHandler) login(w http.ResponseWriter, r *http.Request) {
@@ -63,7 +64,9 @@ func (h *authHandler) refresh(w http.ResponseWriter, r *http.Request) {
 	}
 	h.setAccessCookie(w, tokens.AccessToken, tokens.ExpiresAt)
 	h.setRefreshCookie(w, tokens.RefreshToken, tokens.RefreshExpiresAt)
-	writeJSON(w, http.StatusOK, map[string]any{"access_token": tokens.AccessToken, "expires_at": tokens.ExpiresAt})
+	// The refresh token is included for cross-origin UI clients that use
+	// bearer auth instead of cookies; cookie clients ignore it.
+	writeJSON(w, http.StatusOK, map[string]any{"access_token": tokens.AccessToken, "refresh_token": tokens.RefreshToken, "expires_at": tokens.ExpiresAt})
 }
 
 func (h *authHandler) me(w http.ResponseWriter, r *http.Request) {
@@ -101,7 +104,7 @@ func (h *authHandler) writeTokens(w http.ResponseWriter, user auth.User, tokens 
 	h.setCSRFToken(w)
 	h.setAccessCookie(w, tokens.AccessToken, tokens.ExpiresAt)
 	h.setRefreshCookie(w, tokens.RefreshToken, tokens.RefreshExpiresAt)
-	writeJSON(w, http.StatusOK, authResponse{UserID: user.ID, Username: user.Username, AccessToken: tokens.AccessToken, ExpiresAt: tokens.ExpiresAt})
+	writeJSON(w, http.StatusOK, authResponse{UserID: user.ID, Username: user.Username, AccessToken: tokens.AccessToken, RefreshToken: tokens.RefreshToken, ExpiresAt: tokens.ExpiresAt})
 }
 
 func (h *authHandler) setCSRFToken(w http.ResponseWriter) {

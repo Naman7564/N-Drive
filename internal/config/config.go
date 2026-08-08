@@ -2,10 +2,14 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"fileservice/internal/storage"
 )
 
 // Config contains runtime configuration for the API.
@@ -15,6 +19,22 @@ type Config struct {
 	Auth        AuthConfig
 	Database    DatabaseConfig
 	Storage     StorageConfig
+	CORS        CORSConfig
+	UI          UIConfig
+}
+
+// CORSConfig controls cross-origin API access for a separately hosted UI.
+// AllowedOrigins lists the exact origins (scheme, host, optional port) that
+// may call the API from the browser.
+type CORSConfig struct {
+	AllowedOrigins []string
+}
+
+// UIConfig controls how the built-in web UI targets its API. When APIBase is
+// set, the embedded page points its requests at that URL instead of itself,
+// which pairs with CORSConfig to let the UI live on a different origin.
+type UIConfig struct {
+	APIBase string
 }
 
 // HTTPConfig controls server networking and timeout behavior.
@@ -65,6 +85,9 @@ type StorageConfig struct {
 	MaxBytes int64
 	// AllowedMIMEs is an optional allowlist. An empty list accepts all file types.
 	AllowedMIMEs []string
+	// Mounts lists the named storage roots (disks) served by the app. When
+	// empty, a single default mount is derived from Root.
+	Mounts []storage.MountSpec
 }
 
 // Load reads configuration from environment variables and applies safe defaults.
@@ -96,11 +119,77 @@ func Load() (Config, error) {
 		},
 		Database: DatabaseConfig{Path: getString("DATABASE_PATH", "data/fileservice.db")},
 		Storage:  StorageConfig{Root: getString("STORAGE_ROOT", "data/objects"), MaxBytes: getInt64("UPLOAD_MAX_BYTES", 5<<30), AllowedMIMEs: nil},
+		CORS:      CORSConfig{AllowedOrigins: parseCSV("CORS_ALLOWED_ORIGINS")},
+		UI:        UIConfig{APIBase: strings.TrimRight(strings.TrimSpace(getString("UI_API_BASE", "")), "/")},
 	}
+	mounts, err := parseMounts(os.Getenv("STORAGE_MOUNTS"), cfg.Storage.Root)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Storage.Mounts = mounts
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+// mountIDPattern is the allowed shape of a mount id; the id is used verbatim
+// in URLs and in the database, so it must be a short, safe identifier.
+var mountIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+
+// parseMounts reads the STORAGE_MOUNTS value ("Name1=/path1;Name2=/path2") and
+// returns one MountSpec per entry. When the variable is unset or blank, a
+// single default mount is derived from the legacy STORAGE_ROOT path so
+// existing deployments keep working unchanged.
+func parseMounts(value, root string) ([]storage.MountSpec, error) {
+	if strings.TrimSpace(value) == "" {
+		return []storage.MountSpec{{ID: "default", Name: "Main", Root: strings.TrimSpace(root)}}, nil
+	}
+	var mounts []storage.MountSpec
+	for _, entry := range strings.Split(value, ";") {
+		spec, err := parseMountEntry(entry)
+		if err != nil {
+			return nil, err
+		}
+		if spec.ID != "" {
+			mounts = append(mounts, spec)
+		}
+	}
+	if len(mounts) == 0 {
+		return nil, fmt.Errorf("STORAGE_MOUNTS must name at least one disk")
+	}
+	// The first disk is the default disk and keeps the id "default" so files
+	// stored before multi-disk support (which are tagged with "default")
+	// remain visible on it. If the user already named a disk "default", that
+	// name is respected instead of creating a duplicate id.
+	hasDefault := false
+	for _, mount := range mounts {
+		if mount.ID == "default" {
+			hasDefault = true
+			break
+		}
+	}
+	if !hasDefault {
+		mounts[0].ID = "default"
+	}
+	return mounts, nil
+}
+
+func parseMountEntry(entry string) (storage.MountSpec, error) {
+	entry = strings.TrimSpace(entry)
+	if entry == "" {
+		return storage.MountSpec{}, nil // tolerate a trailing separator
+	}
+	name, path, found := strings.Cut(entry, "=")
+	name = strings.TrimSpace(name)
+	path = strings.TrimSpace(path)
+	if !found || !mountIDPattern.MatchString(name) {
+		return storage.MountSpec{}, fmt.Errorf("STORAGE_MOUNTS entry %q is invalid: use Name=/absolute/path with a short alphanumeric name", entry)
+	}
+	if path == "" {
+		return storage.MountSpec{}, fmt.Errorf("STORAGE_MOUNTS entry %q has an empty path", entry)
+	}
+	return storage.MountSpec{ID: name, Name: name, Root: path}, nil
 }
 
 // Validate rejects unsafe or unusable runtime settings.
@@ -152,10 +241,51 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.Database.Path) == "" {
 		return fmt.Errorf("DATABASE_PATH must not be empty")
 	}
-	if strings.TrimSpace(c.Storage.Root) == "" || c.Storage.MaxBytes <= 0 {
+	if c.Storage.MaxBytes <= 0 {
 		return fmt.Errorf("storage configuration is invalid")
 	}
+	if len(c.Storage.Mounts) == 0 {
+		return fmt.Errorf("at least one storage mount is required")
+	}
+	seen := make(map[string]struct{}, len(c.Storage.Mounts))
+	for _, mount := range c.Storage.Mounts {
+		if !mountIDPattern.MatchString(mount.ID) || strings.TrimSpace(mount.Name) == "" || strings.TrimSpace(mount.Root) == "" {
+			return fmt.Errorf("storage mount %q is invalid", mount.ID)
+		}
+		if _, ok := seen[mount.ID]; ok {
+			return fmt.Errorf("duplicate storage mount id %q", mount.ID)
+		}
+		seen[mount.ID] = struct{}{}
+	}
+	for _, origin := range c.CORS.AllowedOrigins {
+		if !validCORSOrigin(origin) {
+			return fmt.Errorf("CORS_ALLOWED_ORIGINS entry %q is invalid: use an absolute http(s) origin without a path (e.g. https://files.example.com)", origin)
+		}
+	}
+	if strings.TrimSpace(c.UI.APIBase) != "" && !validOrigin(c.UI.APIBase) {
+		return fmt.Errorf("UI_API_BASE must be an absolute http(s) URL")
+	}
 	return nil
+}
+
+// validOrigin reports whether value is an absolute http(s) URL with a host.
+func validOrigin(value string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil {
+		return false
+	}
+	return (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != ""
+}
+
+// validCORSOrigin is validOrigin plus a rule that the value must be a bare
+// origin: a browser Origin header never contains a path or query string, so
+// entries with one would silently never match.
+func validCORSOrigin(value string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil {
+		return false
+	}
+	return (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != "" && parsed.Path == "" && parsed.RawQuery == "" && parsed.Fragment == ""
 }
 
 func getString(key, fallback string) string {
@@ -199,6 +329,17 @@ func getInt64(key string, fallback int64) int64 {
 		return 0
 	}
 	return parsed
+}
+
+// parseCSV splits a comma-separated env value into trimmed, non-empty items.
+func parseCSV(key string) []string {
+	var items []string
+	for _, item := range strings.Split(os.Getenv(key), ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			items = append(items, strings.TrimRight(item, "/"))
+		}
+	}
+	return items
 }
 
 func getBool(key string, fallback bool) bool {

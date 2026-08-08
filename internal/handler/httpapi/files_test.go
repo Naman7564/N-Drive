@@ -12,6 +12,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"fileservice/internal/config"
+	"fileservice/internal/storage"
 )
 
 func TestUploadWriteBudget(t *testing.T) {
@@ -474,5 +477,242 @@ func TestDownloadHead(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if len(body) != 0 {
 		t.Fatalf("HEAD returned %d body bytes, want 0", len(body))
+	}
+}
+
+// twoMountConfig returns a test config with two named disks: the default mount
+// and a second "Media" mount.
+func twoMountConfig(t *testing.T) config.Config {
+	t.Helper()
+	cfg := testConfig(t)
+	cfg.Storage.Mounts = []storage.MountSpec{
+		{ID: "default", Name: "Main", Root: t.TempDir()},
+		{ID: "media", Name: "Media", Root: t.TempDir()},
+	}
+	return cfg
+}
+
+// TestMultiDiskFlow proves that folders and files live on the disk they were
+// created on: listings are scoped per disk, the same root folder name can
+// exist on different disks, files uploaded into a folder always land on that
+// folder's disk, and the sidebar endpoints report each disk separately.
+func TestMultiDiskFlow(t *testing.T) {
+	handler, closeDatabase := NewRouterWithCloser(context.Background(), slog.Default(), twoMountConfig(t))
+	defer closeDatabase()
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	login, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/auth/login", bytes.NewBufferString(`{"username":"Naman","password":"7564"}`))
+	login.Header.Set("Content-Type", "application/json")
+	loginResponse, err := http.DefaultClient.Do(login)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.NewDecoder(loginResponse.Body).Decode(&payload); err != nil {
+		loginResponse.Body.Close()
+		t.Fatalf("decode login: %v", err)
+	}
+	loginResponse.Body.Close()
+	if payload.AccessToken == "" {
+		t.Fatal("login did not return an access token")
+	}
+	bearer := func(r *http.Request) *http.Request {
+		r.Header.Set("Authorization", "Bearer "+payload.AccessToken)
+		return r
+	}
+	do := func(r *http.Request) *http.Response {
+		t.Helper()
+		resp, err := http.DefaultClient.Do(bearer(r))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+	postJSON := func(path string, body string) *http.Response {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+path, bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		return do(req)
+	}
+
+	// The same root folder name is allowed on both disks.
+	if resp := postJSON("/api/folders", `{"name":"Shared","mount":"default"}`); resp.StatusCode != http.StatusCreated {
+		resp.Body.Close()
+		t.Fatalf("create folder on default: status = %d", resp.StatusCode)
+	} else {
+		resp.Body.Close()
+	}
+	if resp := postJSON("/api/folders", `{"name":"Shared","mount":"media"}`); resp.StatusCode != http.StatusCreated {
+		resp.Body.Close()
+		t.Fatalf("create folder on media: status = %d", resp.StatusCode)
+	} else {
+		resp.Body.Close()
+	}
+
+	// Upload one file to each disk root. The expected mount is explicit so the
+	// test documents that uploads into a folder land on the folder's disk even
+	// when the request names a different disk.
+	upload := func(mount, folderID, name, content, wantMount string) string {
+		t.Helper()
+		var body bytes.Buffer
+		writer := multipart.NewWriter(&body)
+		if mount != "" {
+			_ = writer.WriteField("mount", mount)
+		}
+		if folderID != "" {
+			_ = writer.WriteField("folder_id", folderID)
+		}
+		part, _ := writer.CreateFormFile("file", name)
+		if _, err := part.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+		_ = writer.Close()
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/files/upload", &body)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		resp := do(req)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusCreated {
+			data, _ := io.ReadAll(resp.Body)
+			t.Fatalf("upload %s: status = %d, body = %s", name, resp.StatusCode, data)
+		}
+		var item struct {
+			ID    string `json:"id"`
+			Mount string `json:"mount"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&item); err != nil {
+			t.Fatal(err)
+		}
+		if item.Mount != wantMount {
+			t.Fatalf("upload %s: mount = %q, want %q", name, item.Mount, wantMount)
+		}
+		return item.ID
+	}
+	upload("default", "", "a.txt", "on main disk", "default")
+	upload("media", "", "b.txt", "on media disk", "media")
+
+	names := func(resp *http.Response) []string {
+		t.Helper()
+		defer resp.Body.Close()
+		var payload struct {
+			Items []struct {
+				Name string `json:"name"`
+			} `json:"items"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		var result []string
+		for _, item := range payload.Items {
+			result = append(result, item.Name)
+		}
+		return result
+	}
+	get := func(path string) *http.Response {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodGet, ts.URL+path, nil)
+		return do(req)
+	}
+
+	folders := func(mount string) []string {
+		return names(get("/api/folders?mount=" + mount))
+	}
+	files := func(mount string) []string {
+		return names(get("/api/files?mount=" + mount))
+	}
+	if got := folders("default"); len(got) != 1 || got[0] != "Shared" {
+		t.Fatalf("default disk folders = %v, want [Shared]", got)
+	}
+	if got := folders("media"); len(got) != 1 || got[0] != "Shared" {
+		t.Fatalf("media disk folders = %v, want [Shared]", got)
+	}
+	if got := files("default"); len(got) != 1 || got[0] != "a.txt" {
+		t.Fatalf("default disk files = %v, want [a.txt]", got)
+	}
+	if got := files("media"); len(got) != 1 || got[0] != "b.txt" {
+		t.Fatalf("media disk files = %v, want [b.txt]", got)
+	}
+
+	// Uploading into a folder always lands on that folder's disk, even when
+	// the request names a different disk.
+	var shared struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(get("/api/folders?mount=default").Body).Decode(&shared); err != nil {
+		t.Fatal(err)
+	}
+	defaultSharedID := shared.Items[0].ID
+	upload("media", defaultSharedID, "c.txt", "inside a default-disk folder", "default")
+
+	// The new file appears inside the default disk's folder listing...
+	if got := names(get("/api/files?mount=default&folder_id=" + defaultSharedID)); len(got) != 1 || got[0] != "c.txt" {
+		t.Fatalf("default-disk folder contents = %v, want [c.txt]", got)
+	}
+	// ...and the media disk root is untouched.
+	if got := files("media"); len(got) != 1 || got[0] != "b.txt" {
+		t.Fatalf("media disk files after folder upload = %v, want [b.txt]", got)
+	}
+
+	// The sidebar data: dashboard and disks both report both disks.
+	for _, path := range []string{"/api/dashboard", "/api/disks"} {
+		resp := get(path)
+		var payload struct {
+			Disks []struct {
+				ID    string `json:"id"`
+				Name  string `json:"name"`
+				Total int64  `json:"total"`
+				Files int64  `json:"files"`
+			} `json:"disks"`
+			Items []struct {
+				ID    string `json:"id"`
+				Name  string `json:"name"`
+				Total int64  `json:"total"`
+				Files int64  `json:"files"`
+			} `json:"items"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+			resp.Body.Close()
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		var disks []struct {
+			ID    string
+			Name  string
+			Total int64
+			Files int64
+		}
+		for _, disk := range payload.Disks {
+			disks = append(disks, struct {
+				ID    string
+				Name  string
+				Total int64
+				Files int64
+			}{disk.ID, disk.Name, disk.Total, disk.Files})
+		}
+		for _, disk := range payload.Items {
+			disks = append(disks, struct {
+				ID    string
+				Name  string
+				Total int64
+				Files int64
+			}{disk.ID, disk.Name, disk.Total, disk.Files})
+		}
+		if len(disks) != 2 {
+			t.Fatalf("%s disks = %+v, want 2 disks", path, disks)
+		}
+		seen := map[string]bool{}
+		for _, disk := range disks {
+			seen[disk.ID] = true
+			if disk.Total <= 0 {
+				t.Fatalf("%s disk %q has zero capacity", path, disk.ID)
+			}
+		}
+		if !seen["default"] || !seen["media"] {
+			t.Fatalf("%s disks = %+v, want default and media", path, disks)
+		}
 	}
 }

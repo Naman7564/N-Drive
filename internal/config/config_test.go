@@ -85,3 +85,136 @@ func TestLoadRejectsInvalidDuration(t *testing.T) {
 		t.Fatal("Load() error = nil, want invalid duration error")
 	}
 }
+
+func TestLoadParsesCORSOrigins(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("CORS_ALLOWED_ORIGINS", "https://files.example.com, https://api2.example.com/")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(cfg.CORS.AllowedOrigins) != 2 {
+		t.Fatalf("origins = %v, want 2 entries", cfg.CORS.AllowedOrigins)
+	}
+	if cfg.CORS.AllowedOrigins[0] != "https://files.example.com" || cfg.CORS.AllowedOrigins[1] != "https://api2.example.com" {
+		t.Fatalf("origins = %v", cfg.CORS.AllowedOrigins)
+	}
+}
+
+func TestLoadRejectsInvalidCORSOrigin(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	for _, value := range []string{"not-a-url", "https://files.example.com/path"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("CORS_ALLOWED_ORIGINS", value)
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load() with CORS_ALLOWED_ORIGINS=%q error = nil, want error", value)
+			}
+		})
+	}
+}
+
+func TestLoadReadsUIAPIBasе(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("UI_API_BASE", "https://api.example.com/")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.UI.APIBase != "https://api.example.com" {
+		t.Fatalf("UI.APIBase = %q, want trailing slash trimmed", cfg.UI.APIBase)
+	}
+
+	t.Setenv("UI_API_BASE", "relative/path")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() error = nil, want error for a relative UI_API_BASE")
+	}
+}
+
+func TestLoadDefaultsToSingleMountFromStorageRoot(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("STORAGE_MOUNTS", "")
+	t.Setenv("STORAGE_ROOT", "/mnt/ndrive")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(cfg.Storage.Mounts) != 1 {
+		t.Fatalf("mounts = %v, want a single default mount", cfg.Storage.Mounts)
+	}
+	mount := cfg.Storage.Mounts[0]
+	if mount.ID != "default" || mount.Name != "Main" || mount.Root != "/mnt/ndrive" {
+		t.Fatalf("default mount = %+v", mount)
+	}
+}
+
+func TestLoadParsesStorageMounts(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("STORAGE_MOUNTS", "Main=/mnt/main;Media=/mnt/media")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(cfg.Storage.Mounts) != 2 {
+		t.Fatalf("mounts = %v, want 2 mounts", cfg.Storage.Mounts)
+	}
+	// The first listed disk is the default disk and always keeps the id
+	// "default", so pre-multi-disk files remain visible on it.
+	if cfg.Storage.Mounts[0].ID != "default" || cfg.Storage.Mounts[0].Name != "Main" || cfg.Storage.Mounts[0].Root != "/mnt/main" {
+		t.Fatalf("first mount = %+v", cfg.Storage.Mounts[0])
+	}
+	if cfg.Storage.Mounts[1].ID != "Media" || cfg.Storage.Mounts[1].Root != "/mnt/media" {
+		t.Fatalf("second mount = %+v", cfg.Storage.Mounts[1])
+	}
+}
+
+func TestLoadRejectsInvalidStorageMounts(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	cases := []string{
+		"Not Allowed=/x",   // spaces in the name
+		"=/x",              // missing name
+		"Name=",            // missing path
+		"Name=/x;= /y",     // one bad entry
+		"Na@me=/x",         // name with forbidden characters
+	}
+	for _, value := range cases {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("STORAGE_MOUNTS", value)
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load() with STORAGE_MOUNTS=%q error = nil, want error", value)
+			}
+		})
+	}
+}
+
+func TestLoadRespectsExplicitDefaultMountName(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	// When the user names a disk "default" themselves, the first disk keeps
+	// its own id instead of being remapped onto a duplicate "default".
+	t.Setenv("STORAGE_MOUNTS", "Main=/mnt/main;default=/mnt/default")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(cfg.Storage.Mounts) != 2 {
+		t.Fatalf("mounts = %v, want 2 mounts", cfg.Storage.Mounts)
+	}
+	if cfg.Storage.Mounts[0].ID != "Main" || cfg.Storage.Mounts[1].ID != "default" {
+		t.Fatalf("mounts = %+v, want Main then default", cfg.Storage.Mounts)
+	}
+}
+
+func TestLoadAllowsTrailingMountSeparator(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("STORAGE_MOUNTS", "Main=/mnt/main;")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(cfg.Storage.Mounts) != 1 || cfg.Storage.Mounts[0].ID != "default" || cfg.Storage.Mounts[0].Name != "Main" {
+		t.Fatalf("mounts = %v, want one default Main mount", cfg.Storage.Mounts)
+	}
+}

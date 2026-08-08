@@ -71,10 +71,57 @@ func Migrate(ctx context.Context, db *sql.DB, seed SeedCredentials) error {
 	if _, err := db.ExecContext(ctx, singleUserSchema); err != nil {
 		return fmt.Errorf("migrate database: %w", err)
 	}
+	if err := ensureColumns(ctx, db); err != nil {
+		return fmt.Errorf("migrate storage mounts: %w", err)
+	}
+	// Indexes that reference the mount column are created after the column is
+	// guaranteed to exist (fresh databases get it from the schema, existing
+	// databases from ensureColumns).
+	for _, index := range []string{
+		`CREATE INDEX IF NOT EXISTS idx_folders_mount ON folders(mount,parent_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_files_mount_deleted ON files(mount,deleted_at)`,
+	} {
+		if _, err := db.ExecContext(ctx, index); err != nil {
+			return fmt.Errorf("index storage mounts: %w", err)
+		}
+	}
+	// Root folders are unique per (name, mount) so each disk can have its own
+	// root folder tree without colliding with another disk's roots.
+	if _, err := db.ExecContext(ctx, `DROP INDEX IF EXISTS idx_folders_root_name`); err != nil {
+		return fmt.Errorf("rebuild root folder index: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_folders_root_name ON folders(name,mount) WHERE parent_id IS NULL`); err != nil {
+		return fmt.Errorf("rebuild root folder index: %w", err)
+	}
 	if err := seedSingleUser(ctx, db, seed); err != nil {
 		return err
 	}
-	_, _ = db.ExecContext(ctx, `PRAGMA user_version = 1`)
+	_, _ = db.ExecContext(ctx, `PRAGMA user_version = 2`)
+	return nil
+}
+
+// ensureColumns adds the per-disk mount column to existing tables that were
+// created before multi-disk support. New databases get the column from the
+// schema directly, so this is a no-op for them.
+func ensureColumns(ctx context.Context, db *sql.DB) error {
+	for _, column := range []struct {
+		table  string
+		name   string
+		ddl    string
+	}{
+		{"files", "mount", `ALTER TABLE files ADD COLUMN mount TEXT NOT NULL DEFAULT 'default'`},
+		{"folders", "mount", `ALTER TABLE folders ADD COLUMN mount TEXT NOT NULL DEFAULT 'default'`},
+	} {
+		var found bool
+		if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info(?) WHERE name = ?)`, column.table, column.name).Scan(&found); err != nil {
+			return err
+		}
+		if !found {
+			if _, err := db.ExecContext(ctx, column.ddl); err != nil {
+				return err
+		}
+		}
+	}
 	return nil
 }
 
@@ -82,9 +129,8 @@ const singleUserSchema = `
 CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY,username TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY,token_hash TEXT NOT NULL UNIQUE,expires_at TEXT NOT NULL,revoked_at TEXT,created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);
-CREATE TABLE IF NOT EXISTS folders (id TEXT PRIMARY KEY,parent_id TEXT REFERENCES folders(id) ON DELETE CASCADE,name TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(parent_id,name));
-CREATE UNIQUE INDEX IF NOT EXISTS idx_folders_root_name ON folders(name) WHERE parent_id IS NULL;
-CREATE TABLE IF NOT EXISTS files (id TEXT PRIMARY KEY,folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL,storage_key TEXT NOT NULL UNIQUE,name TEXT NOT NULL,content_type TEXT NOT NULL,size INTEGER NOT NULL,checksum TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,deleted_at TEXT);
+CREATE TABLE IF NOT EXISTS folders (id TEXT PRIMARY KEY,parent_id TEXT REFERENCES folders(id) ON DELETE CASCADE,name TEXT NOT NULL,mount TEXT NOT NULL DEFAULT 'default',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(parent_id,name));
+CREATE TABLE IF NOT EXISTS files (id TEXT PRIMARY KEY,folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL,storage_key TEXT NOT NULL UNIQUE,name TEXT NOT NULL,content_type TEXT NOT NULL,size INTEGER NOT NULL,checksum TEXT NOT NULL,mount TEXT NOT NULL DEFAULT 'default',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,deleted_at TEXT);
 CREATE INDEX IF NOT EXISTS idx_files_folder_deleted ON files(folder_id,deleted_at);
 CREATE INDEX IF NOT EXISTS idx_files_checksum ON files(checksum);
 CREATE TABLE IF NOT EXISTS audit_events (id TEXT PRIMARY KEY,action TEXT NOT NULL,resource_id TEXT,metadata TEXT,created_at TEXT NOT NULL);
@@ -109,6 +155,9 @@ func migrateLegacy(ctx context.Context, db *sql.DB) error {
 	if _, err := db.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
 		return fmt.Errorf("disable foreign keys for migration: %w", err)
 	}
+	// The rebuilt tables intentionally match the pre-multi-disk columns; the
+	// mount column is added afterwards by ensureColumns so this rebuild stays
+	// a straight copy of existing rows.
 	const rebuild = `
 BEGIN;
 CREATE TABLE users_new (id TEXT PRIMARY KEY,username TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,created_at TEXT NOT NULL);

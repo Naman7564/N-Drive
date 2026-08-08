@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,8 +21,17 @@ import (
 type fileHandler struct {
 	service         *service.FileService
 	repo            *repository.FileRepository
-	store           *storage.LocalStore
+	mounts          *storage.Mounts
 	serviceMaxBytes int64
+}
+
+// mountParam returns the disk named by the request, falling back to the
+// default (first) configured disk when the query does not name one.
+func (h *fileHandler) mountParam(r *http.Request) string {
+	if mount := r.URL.Query().Get("mount"); mount != "" {
+		return mount
+	}
+	return h.mounts.Default().ID
 }
 
 func page(r *http.Request) (int, int) {
@@ -42,7 +52,7 @@ func encodeData(w http.ResponseWriter, value any) { writeJSON(w, http.StatusOK, 
 
 func (h *fileHandler) listFolders(w http.ResponseWriter, r *http.Request) {
 	limit, offset := page(r)
-	items, err := h.repo.ListFolders(r.Context(), r.URL.Query().Get("parent_id"), limit, offset)
+	items, err := h.repo.ListFolders(r.Context(), h.mountParam(r), r.URL.Query().Get("parent_id"), limit, offset)
 	if err != nil {
 		writeError(w, 500, "could not list folders")
 		return
@@ -51,13 +61,14 @@ func (h *fileHandler) listFolders(w http.ResponseWriter, r *http.Request) {
 }
 func (h *fileHandler) createFolder(w http.ResponseWriter, r *http.Request) {
 	var body struct {
+		Mount    string `json:"mount"`
 		ParentID string `json:"parent_id"`
 		Name     string `json:"name"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	item, err := h.service.CreateFolder(r.Context(), body.ParentID, strings.TrimSpace(body.Name))
+	item, err := h.service.CreateFolder(r.Context(), body.Mount, body.ParentID, strings.TrimSpace(body.Name))
 	if err != nil {
 		if errors.Is(err, repository.ErrConflict) {
 			writeError(w, 409, "folder already exists")
@@ -113,7 +124,7 @@ func (h *fileHandler) upload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "multipart upload required")
 		return
 	}
-	var folderID string
+	var folderID, mountID string
 	var result repository.File
 	for {
 		part, err := reader.NextPart()
@@ -129,16 +140,23 @@ func (h *fileHandler) upload(w http.ResponseWriter, r *http.Request) {
 			folderID = strings.TrimSpace(string(data))
 			continue
 		}
+		if part.FormName() == "mount" {
+			data, _ := io.ReadAll(io.LimitReader(part, 1024))
+			mountID = strings.TrimSpace(string(data))
+			continue
+		}
 		if part.FormName() != "file" {
 			continue
 		}
-		result, err = h.service.Upload(r.Context(), folderID, part.FileName(), part.Header.Get("Content-Type"), part)
+		result, err = h.service.Upload(r.Context(), mountID, folderID, part.FileName(), part.Header.Get("Content-Type"), part)
 		if err != nil {
 			var maxBytesErr *http.MaxBytesError
 			if errors.Is(err, storage.ErrTooLarge) || errors.As(err, &maxBytesErr) {
 				writeError(w, 413, "file too large")
 			} else if errors.Is(err, storage.ErrInvalidMIME) {
 				writeError(w, 415, "file type is not allowed")
+			} else if errors.Is(err, storage.ErrMountNotFound) || errors.Is(err, repository.ErrMountMismatch) {
+				writeError(w, 400, "disk not found")
 			} else {
 				writeError(w, 400, "upload failed")
 			}
@@ -154,7 +172,7 @@ func (h *fileHandler) upload(w http.ResponseWriter, r *http.Request) {
 }
 func (h *fileHandler) listFiles(w http.ResponseWriter, r *http.Request) {
 	limit, offset := page(r)
-	items, err := h.repo.ListFiles(r.Context(), r.URL.Query().Get("folder_id"), limit, offset)
+	items, err := h.repo.ListFiles(r.Context(), h.mountParam(r), r.URL.Query().Get("folder_id"), limit, offset)
 	if err != nil {
 		writeError(w, 500, "could not list files")
 		return
@@ -171,7 +189,12 @@ func (h *fileHandler) download(w http.ResponseWriter, r *http.Request) {
 	// when the request header is read, so a large or slow download can be cut
 	// off mid-stream. Extend the write deadline for this request.
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(downloadWriteBudget(item.Size)))
-	file, err := h.store.Open(item.StorageKey)
+	mount, err := h.mounts.Get(item.Mount)
+	if err != nil {
+		writeError(w, 404, "file content not found")
+		return
+	}
+	file, err := mount.Store.Open(item.StorageKey)
 	if err != nil {
 		writeError(w, 404, "file content not found")
 		return
@@ -309,6 +332,10 @@ func (h *fileHandler) moveFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.service.MoveFile(r.Context(), r.PathValue("id"), body.FolderID); err != nil {
+		if errors.Is(err, repository.ErrMountMismatch) {
+			writeError(w, 400, "cannot move a file between disks")
+			return
+		}
 		writeError(w, 404, "file or folder not found")
 		return
 	}
@@ -323,7 +350,7 @@ func (h *fileHandler) deleteFile(w http.ResponseWriter, r *http.Request) {
 }
 func (h *fileHandler) trash(w http.ResponseWriter, r *http.Request) {
 	limit, offset := page(r)
-	items, err := h.repo.ListTrash(r.Context(), limit, offset)
+	items, err := h.repo.ListTrash(r.Context(), h.mountParam(r), limit, offset)
 	if err != nil {
 		writeError(w, 500, "could not list trash")
 		return
@@ -346,7 +373,7 @@ func (h *fileHandler) purge(w http.ResponseWriter, r *http.Request) {
 }
 func (h *fileHandler) search(w http.ResponseWriter, r *http.Request) {
 	limit, offset := page(r)
-	items, err := h.repo.Search(r.Context(), r.URL.Query().Get("q"), limit, offset)
+	items, err := h.repo.Search(r.Context(), h.mountParam(r), r.URL.Query().Get("q"), limit, offset)
 	if err != nil {
 		writeError(w, 500, "search failed")
 		return
@@ -359,11 +386,32 @@ func (h *fileHandler) dashboard(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "dashboard unavailable")
 		return
 	}
-	total, free, used := h.store.DiskUsage()
+	total, free, used := h.mounts.Default().Store.DiskUsage()
 	encodeData(w, map[string]any{
 		"files": data["files"], "folders": data["folders"], "bytes": data["bytes"], "trash": data["trash"],
 		"storage": map[string]int64{"total": total, "free": free, "used": used},
+		"disks":   h.diskViews(r.Context()),
 	})
+}
+
+// diskViews reports per-disk usage (filesystem capacity plus the number and
+// size of files stored on each disk), used to render the sidebar's disk list.
+func (h *fileHandler) diskViews(ctx context.Context) []map[string]any {
+	views := make([]map[string]any, 0, len(h.mounts.List()))
+	for _, mount := range h.mounts.List() {
+		total, free, used := mount.Store.DiskUsage()
+		files, bytes, _ := h.repo.CountActiveByMount(ctx, mount.ID)
+		views = append(views, map[string]any{
+			"id": mount.ID, "name": mount.Name, "total": total, "free": free, "used": used,
+			"files": files, "bytes": bytes,
+		})
+	}
+	return views
+}
+
+// disks lists the configured storage mounts with their live usage.
+func (h *fileHandler) disks(w http.ResponseWriter, r *http.Request) {
+	encodeData(w, map[string]any{"items": h.diskViews(r.Context())})
 }
 func now() time.Time                        { return time.Now().UTC() }
 func (h *fileHandler) storeMaxBytes() int64 { return h.serviceMaxBytes }

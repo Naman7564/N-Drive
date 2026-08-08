@@ -135,3 +135,142 @@ func TestAuthMe(t *testing.T) {
 		t.Fatalf("anonymous me status = %d", anonResponse.StatusCode)
 	}
 }
+
+// TestCrossOriginAPIWithBearerTokens proves a UI hosted on another origin can
+// use the API end to end: preflight is answered with CORS headers, login
+// returns a refresh token for the remote UI to store, bearer mutations work
+// without any cookies, and the refresh token rotates via the bearer path.
+func TestCrossOriginAPIWithBearerTokens(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.CORS.AllowedOrigins = []string{"https://files.example.com"}
+	handler, closeDatabase := NewRouterWithCloser(context.Background(), slog.Default(), cfg)
+	defer closeDatabase()
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	// Preflight for a cross-origin login.
+	preflight, _ := http.NewRequest(http.MethodOptions, ts.URL+"/api/auth/login", nil)
+	preflight.Header.Set("Origin", "https://files.example.com")
+	preflight.Header.Set("Access-Control-Request-Method", "POST")
+	preflight.Header.Set("Access-Control-Request-Headers", "content-type,authorization")
+	preflightResponse, err := http.DefaultClient.Do(preflight)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preflightResponse.Body.Close()
+	if preflightResponse.StatusCode != http.StatusNoContent {
+		t.Fatalf("preflight status = %d, want 204", preflightResponse.StatusCode)
+	}
+	if got := preflightResponse.Header.Get("Access-Control-Allow-Origin"); got != "https://files.example.com" {
+		t.Fatalf("preflight Allow-Origin = %q", got)
+	}
+
+	// Cross-origin login returns CORS headers and a refresh token for the UI.
+	loginBody := bytes.NewBufferString(`{"username":"Naman","password":"7564"}`)
+	login, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/auth/login", loginBody)
+	login.Header.Set("Content-Type", "application/json")
+	login.Header.Set("Origin", "https://files.example.com")
+	loginResponse, err := http.DefaultClient.Do(login)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer loginResponse.Body.Close()
+	if loginResponse.StatusCode != http.StatusOK {
+		t.Fatalf("login status = %d", loginResponse.StatusCode)
+	}
+	if got := loginResponse.Header.Get("Access-Control-Allow-Origin"); got != "https://files.example.com" {
+		t.Fatalf("login Allow-Origin = %q", got)
+	}
+	var payload struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := json.NewDecoder(loginResponse.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.AccessToken == "" || payload.RefreshToken == "" {
+		t.Fatalf("login payload missing tokens: %+v", payload)
+	}
+
+	// A bearer mutation from the UI origin succeeds with no cookies.
+	createBody := bytes.NewBufferString(`{"name":"FromRemoteUI"}`)
+	create, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/folders", createBody)
+	create.Header.Set("Content-Type", "application/json")
+	create.Header.Set("Origin", "https://files.example.com")
+	create.Header.Set("Authorization", "Bearer "+payload.AccessToken)
+	createResponse, err := http.DefaultClient.Do(create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createResponse.Body.Close()
+	if createResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("create folder status = %d, want 201", createResponse.StatusCode)
+	}
+
+	// The refresh token rotates through the bearer path.
+	refresh, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/auth/refresh", nil)
+	refresh.Header.Set("Origin", "https://files.example.com")
+	refresh.Header.Set("Authorization", "Bearer "+payload.RefreshToken)
+	refreshResponse, err := http.DefaultClient.Do(refresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer refreshResponse.Body.Close()
+	if refreshResponse.StatusCode != http.StatusOK {
+		t.Fatalf("refresh status = %d", refreshResponse.StatusCode)
+	}
+	var rotated struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := json.NewDecoder(refreshResponse.Body).Decode(&rotated); err != nil {
+		t.Fatal(err)
+	}
+	if rotated.AccessToken == "" || rotated.RefreshToken == "" {
+		t.Fatalf("refresh payload missing tokens: %+v", rotated)
+	}
+}
+
+// TestWebHomePointsAtRemoteAPI proves the embedded workspace can be served
+// from one origin while targeting a remote API: the API base is injected into
+// the page and the CSP allows the remote origin.
+func TestWebHomePointsAtRemoteAPI(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.UI.APIBase = "https://api.example.com"
+	handler, closeDatabase := NewRouterWithCloser(context.Background(), slog.Default(), cfg)
+	defer closeDatabase()
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	response, err := http.DefaultClient.Get(ts.URL + "/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, _ := io.ReadAll(response.Body)
+	if !strings.Contains(string(body), `window.NDRIVE_API_BASE="https://api.example.com";`) {
+		t.Fatal("page does not inject the remote API base")
+	}
+	csp := response.Header.Get("Content-Security-Policy")
+	if !strings.Contains(csp, "connect-src 'self' https://api.example.com") {
+		t.Fatalf("CSP does not allow the remote API: %q", csp)
+	}
+
+	// Without UI_API_BASE the page stays same-origin.
+	handler2, closeDatabase2 := NewRouterWithCloser(context.Background(), slog.Default(), testConfig(t))
+	defer closeDatabase2()
+	ts2 := httptest.NewServer(handler2)
+	defer ts2.Close()
+	response2, err := http.DefaultClient.Get(ts2.URL + "/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response2.Body.Close()
+	body2, _ := io.ReadAll(response2.Body)
+	if strings.Contains(string(body2), `window.NDRIVE_API_BASE="https://api.example.com";`) {
+		t.Fatal("page should not inject a remote API base by default")
+	}
+	if csp2 := response2.Header.Get("Content-Security-Policy"); !strings.Contains(csp2, "connect-src 'self'") || strings.Contains(csp2, "https://api.example.com") {
+		t.Fatalf("default CSP = %q", csp2)
+	}
+}
