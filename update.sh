@@ -15,6 +15,16 @@ HEALTH_URL="http://localhost:8080/health"
 # Go is not on the default non-interactive PATH; add its install location.
 export PATH="$PATH:/usr/local/go/bin"
 
+# Load optional runtime configuration from /etc/ndrive.env when present and
+# readable (the file may be root-owned, so a non-sudo update skips it). This
+# keeps env settings like UI_REMOTE_SERVERS or STORAGE_MOUNTS in one place
+# instead of relying on the invoking shell's environment.
+if [ -r /etc/ndrive.env ]; then
+  set -a
+  . /etc/ndrive.env
+  set +a
+fi
+
 # --- lock (prevents concurrent updates, tolerates stale locks) ----------
 if [ -f "$LOCK_FILE" ]; then
   LOCK_PID=$(cat "$LOCK_FILE" 2>/dev/null || true)
@@ -53,7 +63,30 @@ fi
 echo "==> go build"
 go build -o "$BIN.new" ./cmd/api
 
-# --- 3. stop old server (graceful) --------------------------------------
+# --- 3. restart -----------------------------------------------------------
+# Prefer systemd when an ndrive unit exists: the service manager keeps the
+# server alive across sessions and reboots. Otherwise fall back to the legacy
+# pidfile + nohup flow below.
+if [ -f /etc/systemd/system/ndrive.service ] && command -v systemctl >/dev/null 2>&1; then
+  echo "==> restarting via systemd"
+  sudo systemctl daemon-reload 2>/dev/null || true
+  sudo systemctl restart ndrive
+  READY=0
+  for ((i = 0; i < 15; i++)); do
+    # Both the service manager and the HTTP endpoint must confirm readiness,
+    # so a stale process still holding the port cannot produce a false pass.
+    if sudo systemctl is-active --quiet ndrive && curl -fsS "$HEALTH_URL" >/dev/null 2>&1; then READY=1; break; fi
+    sleep 1
+  done
+  if [ "$READY" -eq 1 ]; then
+    echo "update complete (systemd, health OK)"
+    exit 0
+  fi
+  echo "ERROR: systemd restart did not become healthy" >&2
+  exit 1
+fi
+
+# --- 4. stop old server (graceful) ----------------------------------------
 # Only signal a PID that actually belongs to the ndrive binary, so a stale
 # or recycled pidfile can never take down an unrelated process. If the
 # pidfile is stale or missing, fall back to finding the real server by its
@@ -102,12 +135,12 @@ if [ -n "$OLD_PIDS" ]; then
   done
 fi
 
-# --- 4. install new binary, keep previous as fallback --------------------
+# --- 5. install new binary, keep previous as fallback --------------------
 [ -f "$BIN" ] && mv -f "$BIN" "$PREV_BIN"
 mv -f "$BIN.new" "$BIN"
 chmod +x "$BIN"
 
-# --- 5. start new server -------------------------------------------------
+# --- 6. start new server -------------------------------------------------
 echo "==> starting new server"
 {
   echo ""
@@ -117,7 +150,7 @@ nohup "$BIN" < /dev/null >> "$LOG_FILE" 2>&1 &
 NEW_PID=$!
 echo "$NEW_PID" > "$PID_FILE"
 
-# --- 6. health check ------------------------------------------------------
+# --- 7. health check ------------------------------------------------------
 # The check only counts as ready when the NEW process is alive AND answering.
 # This prevents a false "update complete" when an old server still holds the
 # port: the curl would succeed against the old server, the script would exit
@@ -148,7 +181,7 @@ if [ "$READY" -eq 1 ]; then
   exit 0
 fi
 
-# --- 7. rollback on failed start -----------------------------------------
+# --- 8. rollback on failed start -----------------------------------------
 echo "ERROR: server (pid $NEW_PID) did not become healthy" >&2
 if awk '/server restarted by update/{marker=NR} marker && /address already in use/{seen=1} END{exit !seen}' "$LOG_FILE"; then
   echo "       port 8080 may still be held by an old process; check $LOG_FILE" >&2

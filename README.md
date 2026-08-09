@@ -43,6 +43,7 @@ Then request `http://localhost:8080/health`.
 | `STORAGE_MOUNTS` | e.g. `Main=/mnt/main;Media=/mnt/media` — named disks listed in the sidebar |
 | `CORS_ALLOWED_ORIGINS` | comma-separated origins (e.g. `https://files.example.com`) allowed to call the API from another host |
 | `UI_API_BASE` | e.g. `https://api.example.com` — point the built-in UI at a remote API (frontend/backend split) |
+| `UI_REMOTE_SERVERS` | e.g. `Media=http://10.0.0.26:8080` — extra backends whose disks appear in the sidebar alongside the local ones (multi-server mode; takes precedence over `UI_API_BASE`) |
 | `JWT_SECRET` | dev-only placeholder (must be changed, ≥ 32 bytes) |
 | `DATABASE_PATH` | `data/fileservice.db` |
 | `N_DRIVE_USERNAME` | `Naman` |
@@ -104,6 +105,33 @@ storage in `localStorage` is XSS-visible, as with any bearer-based web app.
 
 Same-origin deployments are completely unchanged: no `CORS_ALLOWED_ORIGINS`,
 no `UI_API_BASE`, cookie auth with CSRF as before.
+
+### Multiple servers in one sidebar
+
+To keep the built-in UI on this server as the main workspace while also
+showing the disks of other N-Drive backends, set `UI_REMOTE_SERVERS` to a
+semicolon-separated list of `Name=http(s)://host[:port]` entries:
+
+```sh
+UI_REMOTE_SERVERS="Media=http://130.210.21.47:8080;Backup=https://backup.example.com"
+```
+
+Each remote backend must allow this server's origin in its own
+`CORS_ALLOWED_ORIGINS`. The sidebar then lists the local disk(s) under
+"This server" and each remote backend's disks under its configured name,
+all with live usage meters. Clicking a disk switches the workspace to that
+server + disk; uploads, folders, trash, search, and downloads then target
+that backend.
+
+Authentication is per server: signing in authenticates against every
+configured server with the same credentials (each remote stores its own
+bearer tokens in `localStorage` keyed by its origin). If a remote is
+unreachable, the sidebar simply shows the servers that responded and a
+toast reports which one could not be reached.
+
+`UI_REMOTE_SERVERS` takes precedence over `UI_API_BASE`: when remote servers
+are configured, the UI keeps its own API as the main server instead of
+pointing everything at a single remote base.
 
 Uploads accept all detected file types by default. Set `AllowedMIMEs` when constructing a store if a deployment needs a narrower allowlist. Downloads remain forced to attachment disposition.
 

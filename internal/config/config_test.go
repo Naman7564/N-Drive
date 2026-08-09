@@ -131,6 +131,44 @@ func TestLoadReadsUIAPIBasе(t *testing.T) {
 	}
 }
 
+func TestLoadParsesRemoteServers(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("UI_REMOTE_SERVERS", "Media=http://130.210.21.47:8080;Backup=https://backup.example.com/")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(cfg.UI.RemoteServers) != 2 {
+		t.Fatalf("remote servers = %v, want 2 entries", cfg.UI.RemoteServers)
+	}
+	if cfg.UI.RemoteServers[0].Name != "Media" || cfg.UI.RemoteServers[0].Base != "http://130.210.21.47:8080" {
+		t.Fatalf("first remote server = %+v", cfg.UI.RemoteServers[0])
+	}
+	if cfg.UI.RemoteServers[1].Name != "Backup" || cfg.UI.RemoteServers[1].Base != "https://backup.example.com" {
+		t.Fatalf("second remote server = %+v, want trailing slash trimmed", cfg.UI.RemoteServers[1])
+	}
+}
+
+func TestLoadRejectsInvalidRemoteServers(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	cases := []string{
+		"Bad Name=http://host", // spaces in the name
+		"Name=not-a-url",       // invalid base
+		"=http://host",         // missing name
+		"Name=",                // missing base
+		"Name=/relative",       // relative base
+	}
+	for _, value := range cases {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("UI_REMOTE_SERVERS", value)
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load() with UI_REMOTE_SERVERS=%q error = nil, want error", value)
+			}
+		})
+	}
+}
+
 func TestLoadDefaultsToSingleMountFromStorageRoot(t *testing.T) {
 	t.Setenv("APP_ENV", "development")
 	t.Setenv("STORAGE_MOUNTS", "")

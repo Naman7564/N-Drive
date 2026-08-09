@@ -30,11 +30,24 @@ type CORSConfig struct {
 	AllowedOrigins []string
 }
 
+// RemoteServer pairs a display name with the base URL of an additional
+// backend. When UI_REMOTE_SERVERS is set, the built-in UI keeps talking to
+// its own API and additionally lists each remote server's disks in the
+// sidebar, so several servers appear in one workspace.
+type RemoteServer struct {
+	Name string
+	Base string
+}
+
 // UIConfig controls how the built-in web UI targets its API. When APIBase is
-// set, the embedded page points its requests at that URL instead of itself,
-// which pairs with CORSConfig to let the UI live on a different origin.
+// set, the embedded page points all its requests at that URL instead of
+// itself, which pairs with CORSConfig to let the UI live on a different
+// origin. RemoteServers is the multi-server variant: the UI stays pointed at
+// its own API and lists each remote server's disks alongside the local ones.
+// When RemoteServers is non-empty it takes precedence over APIBase.
 type UIConfig struct {
-	APIBase string
+	APIBase       string
+	RemoteServers []RemoteServer
 }
 
 // HTTPConfig controls server networking and timeout behavior.
@@ -119,8 +132,15 @@ func Load() (Config, error) {
 		},
 		Database: DatabaseConfig{Path: getString("DATABASE_PATH", "data/fileservice.db")},
 		Storage:  StorageConfig{Root: getString("STORAGE_ROOT", "data/objects"), MaxBytes: getInt64("UPLOAD_MAX_BYTES", 5<<30), AllowedMIMEs: nil},
-		CORS:      CORSConfig{AllowedOrigins: parseCSV("CORS_ALLOWED_ORIGINS")},
-		UI:        UIConfig{APIBase: strings.TrimRight(strings.TrimSpace(getString("UI_API_BASE", "")), "/")},
+		CORS: CORSConfig{AllowedOrigins: parseCSV("CORS_ALLOWED_ORIGINS")},
+	}
+	remoteServers, err := parseRemoteServers(os.Getenv("UI_REMOTE_SERVERS"))
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.UI = UIConfig{
+		APIBase:       strings.TrimRight(strings.TrimSpace(getString("UI_API_BASE", "")), "/"),
+		RemoteServers: remoteServers,
 	}
 	mounts, err := parseMounts(os.Getenv("STORAGE_MOUNTS"), cfg.Storage.Root)
 	if err != nil {
@@ -265,7 +285,45 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.UI.APIBase) != "" && !validOrigin(c.UI.APIBase) {
 		return fmt.Errorf("UI_API_BASE must be an absolute http(s) URL")
 	}
+	seenServers := make(map[string]struct{}, len(c.UI.RemoteServers))
+	for _, server := range c.UI.RemoteServers {
+		if !mountIDPattern.MatchString(server.Name) || strings.TrimSpace(server.Base) == "" {
+			return fmt.Errorf("UI remote server %q is invalid: use a short alphanumeric name and an absolute http(s) URL", server.Name)
+		}
+		if !validOrigin(server.Base) {
+			return fmt.Errorf("UI_REMOTE_SERVERS entry %q has an invalid base URL", server.Name)
+		}
+		if _, ok := seenServers[server.Name]; ok {
+			return fmt.Errorf("duplicate UI remote server name %q", server.Name)
+		}
+		seenServers[server.Name] = struct{}{}
+	}
 	return nil
+}
+
+// parseRemoteServers reads the UI_REMOTE_SERVERS value
+// ("Name1=http://host:port;Name2=https://host2") into RemoteServer entries.
+// A blank value yields no remote servers; entries use the same separator
+// convention as STORAGE_MOUNTS.
+func parseRemoteServers(value string) ([]RemoteServer, error) {
+	var servers []RemoteServer
+	for _, entry := range strings.Split(value, ";") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue // tolerate a trailing separator
+		}
+		name, base, found := strings.Cut(entry, "=")
+		name = strings.TrimSpace(name)
+		base = strings.TrimRight(strings.TrimSpace(base), "/")
+		if !found || name == "" || !mountIDPattern.MatchString(name) || base == "" {
+			return nil, fmt.Errorf("UI_REMOTE_SERVERS entry %q is invalid: use Name=http(s)://host[:port]", entry)
+		}
+		if !validOrigin(base) {
+			return nil, fmt.Errorf("UI_REMOTE_SERVERS entry %q has an invalid base URL", entry)
+		}
+		servers = append(servers, RemoteServer{Name: name, Base: base})
+	}
+	return servers, nil
 }
 
 // validOrigin reports whether value is an absolute http(s) URL with a host.

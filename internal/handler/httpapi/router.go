@@ -61,7 +61,7 @@ func NewRouterWithCloser(ctx context.Context, logger *slog.Logger, cfg config.Co
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", webLanding)
-	mux.HandleFunc("GET /app", webHomeWith(cfg.UI.APIBase))
+	mux.HandleFunc("GET /app", webHomeWith(cfg.UI.APIBase, cfg.UI.RemoteServers))
 	mux.HandleFunc("GET /landing", webLanding)
 	mux.HandleFunc("GET /health", health)
 	mux.Handle("POST /api/auth/login", middleware.NewRateLimiter(cfg.Auth.LoginRateLimit, cfg.Auth.LoginRateWindow).Middleware(http.HandlerFunc(authHandler.login)))

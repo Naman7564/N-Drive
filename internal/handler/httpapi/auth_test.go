@@ -231,6 +231,49 @@ func TestCrossOriginAPIWithBearerTokens(t *testing.T) {
 	}
 }
 
+// TestWebHomeListsRemoteServers proves the multi-server workspace mode: the
+// page injects the remote server list and the CSP allows every remote origin.
+func TestWebHomeListsRemoteServers(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.UI.RemoteServers = []config.RemoteServer{
+		{Name: "Media", Base: "http://130.210.21.47:8080"},
+		{Name: "Backup", Base: "https://backup.example.com"},
+	}
+	handler, closeDatabase := NewRouterWithCloser(context.Background(), slog.Default(), cfg)
+	defer closeDatabase()
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	response, err := http.DefaultClient.Get(ts.URL + "/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, _ := io.ReadAll(response.Body)
+	if !strings.Contains(string(body), `window.NDRIVE_SERVERS=[{"base":"http://130.210.21.47:8080","name":"Media"},{"base":"https://backup.example.com","name":"Backup"}];`) {
+		t.Fatal("page does not inject the remote server list")
+	}
+	csp := response.Header.Get("Content-Security-Policy")
+	if !strings.Contains(csp, "connect-src 'self' http://130.210.21.47:8080 https://backup.example.com") {
+		t.Fatalf("CSP does not allow the remote origins: %q", csp)
+	}
+
+	// Without remote servers the page does not inject the list.
+	handler2, closeDatabase2 := NewRouterWithCloser(context.Background(), slog.Default(), testConfig(t))
+	defer closeDatabase2()
+	ts2 := httptest.NewServer(handler2)
+	defer ts2.Close()
+	response2, err := http.DefaultClient.Get(ts2.URL + "/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response2.Body.Close()
+	body2, _ := io.ReadAll(response2.Body)
+	if strings.Contains(string(body2), "window.NDRIVE_SERVERS=") {
+		t.Fatal("page should not inject a remote server list by default")
+	}
+}
+
 // TestWebHomePointsAtRemoteAPI proves the embedded workspace can be served
 // from one origin while targeting a remote API: the API base is injected into
 // the page and the CSP allows the remote origin.
