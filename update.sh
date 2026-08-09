@@ -68,6 +68,10 @@ go build -o "$BIN.new" ./cmd/api
 # server alive across sessions and reboots. Otherwise fall back to the legacy
 # pidfile + nohup flow below.
 if [ -f /etc/systemd/system/ndrive.service ] && command -v systemctl >/dev/null 2>&1; then
+  echo "==> installing new binary"
+  [ -f "$BIN" ] && mv -f "$BIN" "$PREV_BIN"
+  mv -f "$BIN.new" "$BIN"
+  chmod +x "$BIN"
   echo "==> restarting via systemd"
   sudo systemctl daemon-reload 2>/dev/null || true
   sudo systemctl restart ndrive
@@ -83,6 +87,13 @@ if [ -f /etc/systemd/system/ndrive.service ] && command -v systemctl >/dev/null 
     exit 0
   fi
   echo "ERROR: systemd restart did not become healthy" >&2
+  if [ -f "$PREV_BIN" ]; then
+    echo "       rolling back to previous binary" >&2
+    mv -f "$BIN" "$BIN.failed"
+    mv -f "$PREV_BIN" "$BIN"
+    chmod +x "$BIN"
+    sudo systemctl restart ndrive
+  fi
   exit 1
 fi
 
