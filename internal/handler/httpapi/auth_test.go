@@ -231,8 +231,47 @@ func TestCrossOriginAPIWithBearerTokens(t *testing.T) {
 	}
 }
 
-// TestWebHomeListsRemoteServers proves the multi-server workspace mode: the
-// page injects the remote server list and the CSP allows every remote origin.
+// TestWebHomeDisabledForAPIConfig proves an API-only backend: when the UI is
+// disabled, the web pages return 404 while /health and the API stay up.
+func TestWebHomeDisabledForAPIConfig(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.UI.Disabled = true
+	handler, closeDatabase := NewRouterWithCloser(context.Background(), slog.Default(), cfg)
+	defer closeDatabase()
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	for _, path := range []string{"/", "/app", "/landing"} {
+		response, err := http.DefaultClient.Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusNotFound {
+			t.Fatalf("GET %s status = %d, want 404", path, response.StatusCode)
+		}
+	}
+
+	// The health endpoint and the API keep working.
+	healthResponse, err := http.DefaultClient.Get(ts.URL + "/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	healthResponse.Body.Close()
+	if healthResponse.StatusCode != http.StatusOK {
+		t.Fatalf("GET /health status = %d, want 200", healthResponse.StatusCode)
+	}
+	meRequest, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/auth/me", nil)
+	meResponse, err := http.DefaultClient.Do(meRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	meResponse.Body.Close()
+	if meResponse.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("GET /api/auth/me status = %d, want 401 (route must exist)", meResponse.StatusCode)
+	}
+}
+
 func TestWebHomeListsRemoteServers(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.UI.RemoteServers = []config.RemoteServer{

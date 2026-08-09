@@ -43,6 +43,7 @@ Then request `http://localhost:8080/health`.
 | `STORAGE_MOUNTS` | e.g. `Main=/mnt/main;Media=/mnt/media` — named disks listed in the sidebar |
 | `CORS_ALLOWED_ORIGINS` | comma-separated origins (e.g. `https://files.example.com`) allowed to call the API from another host |
 | `UI_API_BASE` | e.g. `https://api.example.com` — point the built-in UI at a remote API (frontend/backend split) |
+| `UI_DISABLED` | `false` — set to `true` for an API-only backend: the web pages (`/`, `/app`, `/landing`) return 404 while `/health` and `/api/*` keep working |
 | `UI_REMOTE_SERVERS` | e.g. `Media=http://10.0.0.26:8080` — extra backends whose disks appear in the sidebar alongside the local ones (multi-server mode; takes precedence over `UI_API_BASE`) |
 | `JWT_SECRET` | dev-only placeholder (must be changed, ≥ 32 bytes) |
 | `DATABASE_PATH` | `data/fileservice.db` |
@@ -105,6 +106,12 @@ storage in `localStorage` is XSS-visible, as with any bearer-based web app.
 
 Same-origin deployments are completely unchanged: no `CORS_ALLOWED_ORIGINS`,
 no `UI_API_BASE`, cookie auth with CSRF as before.
+
+To run a backend with no UI at all, set `UI_DISABLED=true` on it: the web
+pages (`/`, `/app`, `/landing`) return 404 and only `/health` and the
+`/api/*` endpoints respond. This is the recommended setup for an API-only
+server whose UI lives on another host (typically combined with
+`CORS_ALLOWED_ORIGINS` pointing at that host).
 
 ### Multiple servers in one sidebar
 

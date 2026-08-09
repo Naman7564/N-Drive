@@ -44,10 +44,14 @@ type RemoteServer struct {
 // itself, which pairs with CORSConfig to let the UI live on a different
 // origin. RemoteServers is the multi-server variant: the UI stays pointed at
 // its own API and lists each remote server's disks alongside the local ones.
-// When RemoteServers is non-empty it takes precedence over APIBase.
+// When RemoteServers is non-empty it takes precedence over APIBase. When
+// Disabled is set the server acts as an API-only backend: the web pages
+// ("/", "/app", "/landing") return 404 while "/health" and the "/api/*"
+// routes keep working.
 type UIConfig struct {
 	APIBase       string
 	RemoteServers []RemoteServer
+	Disabled      bool
 }
 
 // HTTPConfig controls server networking and timeout behavior.
@@ -141,6 +145,7 @@ func Load() (Config, error) {
 	cfg.UI = UIConfig{
 		APIBase:       strings.TrimRight(strings.TrimSpace(getString("UI_API_BASE", "")), "/"),
 		RemoteServers: remoteServers,
+		Disabled:      getBool("UI_DISABLED", false),
 	}
 	mounts, err := parseMounts(os.Getenv("STORAGE_MOUNTS"), cfg.Storage.Root)
 	if err != nil {

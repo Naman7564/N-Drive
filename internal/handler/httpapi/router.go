@@ -60,9 +60,14 @@ func NewRouterWithCloser(ctx context.Context, logger *slog.Logger, cfg config.Co
 	protected := func(handler http.Handler) http.Handler { return authMiddleware.RequireAccessToken(handler) }
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", webLanding)
-	mux.HandleFunc("GET /app", webHomeWith(cfg.UI.APIBase, cfg.UI.RemoteServers))
-	mux.HandleFunc("GET /landing", webLanding)
+	// UI_DISABLED runs an API-only backend: the web pages are not registered
+	// at all, so "/", "/app", and "/landing" fall through to a 404 while
+	// "/health" and the "/api/*" routes below keep working.
+	if !cfg.UI.Disabled {
+		mux.HandleFunc("GET /", webLanding)
+		mux.HandleFunc("GET /app", webHomeWith(cfg.UI.APIBase, cfg.UI.RemoteServers))
+		mux.HandleFunc("GET /landing", webLanding)
+	}
 	mux.HandleFunc("GET /health", health)
 	mux.Handle("POST /api/auth/login", middleware.NewRateLimiter(cfg.Auth.LoginRateLimit, cfg.Auth.LoginRateWindow).Middleware(http.HandlerFunc(authHandler.login)))
 	mux.Handle("POST /api/auth/refresh", middleware.NewRateLimiter(cfg.Auth.RefreshRateLimit, cfg.Auth.RefreshRateWindow).Middleware(http.HandlerFunc(authHandler.refresh)))

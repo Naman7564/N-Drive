@@ -171,6 +171,38 @@ func TestLoadRejectsInvalidRemoteServers(t *testing.T) {
 	}
 }
 
+func TestLoadParsesUIDisabled(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+
+	// Default: the UI stays enabled when UI_DISABLED is unset or blank.
+	t.Setenv("UI_DISABLED", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.UI.Disabled {
+		t.Fatal("UI.Disabled = true by default, want false")
+	}
+
+	t.Setenv("UI_DISABLED", "true")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.UI.Disabled {
+		t.Fatal("UI.Disabled = false, want true when UI_DISABLED=true")
+	}
+
+	t.Setenv("UI_DISABLED", "false")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.UI.Disabled {
+		t.Fatal("UI.Disabled = true, want false when UI_DISABLED=false")
+	}
+}
+
 func TestLoadDefaultsToSingleMountFromStorageRoot(t *testing.T) {
 	t.Setenv("APP_ENV", "development")
 	t.Setenv("STORAGE_MOUNTS", "")
