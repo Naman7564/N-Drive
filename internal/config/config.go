@@ -132,7 +132,7 @@ func Load() (Config, error) {
 		},
 		Database: DatabaseConfig{Path: getString("DATABASE_PATH", "data/fileservice.db")},
 		Storage:  StorageConfig{Root: getString("STORAGE_ROOT", "data/objects"), MaxBytes: getInt64("UPLOAD_MAX_BYTES", 5<<30), AllowedMIMEs: nil},
-		CORS: CORSConfig{AllowedOrigins: parseCSV("CORS_ALLOWED_ORIGINS")},
+		CORS:     CORSConfig{AllowedOrigins: parseCSV("CORS_ALLOWED_ORIGINS")},
 	}
 	remoteServers, err := parseRemoteServers(os.Getenv("UI_REMOTE_SERVERS"))
 	if err != nil {
@@ -286,6 +286,7 @@ func (c Config) Validate() error {
 		return fmt.Errorf("UI_API_BASE must be an absolute http(s) URL")
 	}
 	seenServers := make(map[string]struct{}, len(c.UI.RemoteServers))
+	seenBases := make(map[string]struct{}, len(c.UI.RemoteServers))
 	for _, server := range c.UI.RemoteServers {
 		if !mountIDPattern.MatchString(server.Name) || strings.TrimSpace(server.Base) == "" {
 			return fmt.Errorf("UI remote server %q is invalid: use a short alphanumeric name and an absolute http(s) URL", server.Name)
@@ -297,6 +298,10 @@ func (c Config) Validate() error {
 			return fmt.Errorf("duplicate UI remote server name %q", server.Name)
 		}
 		seenServers[server.Name] = struct{}{}
+		if _, ok := seenBases[server.Base]; ok {
+			return fmt.Errorf("UI remote server %q duplicates the base URL of another server", server.Name)
+		}
+		seenBases[server.Base] = struct{}{}
 	}
 	return nil
 }

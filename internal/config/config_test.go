@@ -158,6 +158,8 @@ func TestLoadRejectsInvalidRemoteServers(t *testing.T) {
 		"=http://host",         // missing name
 		"Name=",                // missing base
 		"Name=/relative",       // relative base
+		"A=http://a.example.com;A=http://b.example.com",           // duplicate name
+		"A=http://130.210.21.47:8080;B=http://130.210.21.47:8080", // duplicate base URL
 	}
 	for _, value := range cases {
 		t.Run(value, func(t *testing.T) {
@@ -211,11 +213,11 @@ func TestLoadParsesStorageMounts(t *testing.T) {
 func TestLoadRejectsInvalidStorageMounts(t *testing.T) {
 	t.Setenv("APP_ENV", "development")
 	cases := []string{
-		"Not Allowed=/x",   // spaces in the name
-		"=/x",              // missing name
-		"Name=",            // missing path
-		"Name=/x;= /y",     // one bad entry
-		"Na@me=/x",         // name with forbidden characters
+		"Not Allowed=/x", // spaces in the name
+		"=/x",            // missing name
+		"Name=",          // missing path
+		"Name=/x;= /y",   // one bad entry
+		"Na@me=/x",       // name with forbidden characters
 	}
 	for _, value := range cases {
 		t.Run(value, func(t *testing.T) {
